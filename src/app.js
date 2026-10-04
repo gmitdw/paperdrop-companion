@@ -1,3 +1,4 @@
+import {newestReceiptFirst} from './document-order.js';
 import {cropReceipt} from './receipt-crop.js';
 import {Store,deliver} from './storage.js';
 import {OneDrive} from './graph.js';
@@ -11,7 +12,7 @@ async function render(){
   const catalog=await store.get('catalog'), local=await store.list();
   const waiting=new Set((await store.actions()).filter(a=>['saved','submitted'].includes(a.state)).map(a=>a.doc_id));
   const known=new Set([...(catalog?.documents||[]).map(r=>r.digest),...(catalog?.removed||[])]);
-  const rows=[...local.filter(r=>!known.has(r.digest)),...(catalog?.documents||[])];
+  const rows=[...local.filter(r=>!known.has(r.digest)),...(catalog?.documents||[])].sort(newestReceiptFirst);
   const terms=$('search').value.toLowerCase().split(/\s+/).filter(Boolean);
   const container=$('documents');container.replaceChildren();
   for(const row of rows){
