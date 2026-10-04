@@ -7,6 +7,7 @@ const say=text=>{$('status').textContent=text;};
 const labels={saved:'Saved here',submitted:'Waiting for Surface',review:'Review',filed:'Filed'};
 
 async function render(){
+  $('resume-receipt').hidden=!(await store.get('receipt-draft'));
   const catalog=await store.get('catalog'), local=await store.list();
   const waiting=new Set((await store.actions()).filter(a=>['saved','submitted'].includes(a.state)).map(a=>a.doc_id));
   const known=new Set([...(catalog?.documents||[]).map(r=>r.digest),...(catalog?.removed||[])]);
@@ -70,7 +71,7 @@ $('options-dialog').addEventListener('click',event=>{const r=$('options-dialog')
 
 function review(row){
   reviewRow=row;$('review-party').value=row.vendor;$('review-date').value=row.date;
-  $('review-amount').value=row.amount;$('review-kind').value=row.kind;$('review-reasons').textContent=row.reasons||'';
+  $('review-amount').value=row.amount;$('review-kind').value=({Receipt:'Document Uncategorized',Invoice:'Document Uncategorized',Statement:'Document Uncategorized','Tax document':'Tax Document','Medical document':'Medical Document',Document:'Document Uncategorized'}[row.kind]||row.kind);$('review-reasons').textContent=row.reasons||'';
   setReviewEditing(false);$('review-dialog').showModal();$('review-title').focus({preventScroll:true});
 }
 function setReviewEditing(editing){
@@ -106,7 +107,7 @@ async function capture(event){
       say('Saving your receipt on this device…');
       const original=file;
       if(/\.(jpe?g|png|webp|heic|heif)$/i.test(file.name)||event.target.id==='camera'){
-        file=await cropReceipt(file);if(!file)continue;
+        file=await cropReceipt(file,store,target);if(file)count++;continue;
       }
       await store.save(file,target,file!==original?original:null);count++;
 
@@ -158,6 +159,7 @@ $('folder-use').onclick=async()=>{
   const target=folderStack.at(-1);if(!target)return;
   await store.set('collection',target);$('folder-dialog').close();say('Collection connected.');await sync();
 };
+$('resume-receipt').onclick=async()=>{try{await cropReceipt(null,store);await render();await sync();}catch(e){say(e.message);await render();}};
 $('camera').onchange=capture;$('files').onchange=capture;$('refresh').onclick=sync;$('search').oninput=()=>render();
 document.querySelectorAll('[data-filter]').forEach(button=>button.onclick=()=>{
   filter=button.dataset.filter;document.querySelectorAll('[data-filter]').forEach(b=>b.classList.toggle('selected',b===button));render();

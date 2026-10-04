@@ -49,3 +49,14 @@ test('cropped receipt keeps the original locally and uploads only the crop',asyn
  let sent;await deliver(reopened,{catalog:async()=>({version:1,documents:[]}),upload:async(t,n,blob)=>{sent=await blob.text();}});
  assert.equal(sent,'cropped photo bytes');assert.equal(await (await reopened.list())[0].originalBlob.text(),'original photo bytes');
 });
+
+test('unfinished sections survive reopening; completing a receipt atomically removes its draft',async()=>{
+ const store=fresh(),sections=[{original:receipt(),blob:receipt()},{original:receipt(),blob:receipt()}];
+ await store.set('receipt-draft',{sections,collection:target});
+ const reopened=new Store(store.name);assert.equal((await reopened.get('receipt-draft')).sections.length,2);
+ await assert.rejects(reopened.save(new File([],'empty.pdf'),target,null,true));
+ assert.equal((await reopened.get('receipt-draft')).sections.length,2);assert.equal((await reopened.list()).length,0);
+ await reopened.save(receipt(),target,sections.map(s=>s.original),true);
+ assert.equal(await reopened.get('receipt-draft'),undefined);
+ assert.equal((await reopened.list()).length,1);assert.equal((await reopened.list())[0].originalBlob.length,2);
+});

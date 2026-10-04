@@ -37,7 +37,7 @@ export class Store {
     }
     await this.putAction({id:crypto.randomUUID(),action,doc_id:row.id,digest:row.digest,revision:row.revision,fields,state:'saved'});
   }
-  async save(file,collection=null,originalBlob=null) {
+  async save(file,collection=null,originalBlob=null,finishDraft=false) {
     if(!file.size) throw new Error('This file is empty. Please choose another copy.');
     if(file.size>50*1024*1024) throw new Error('Please use a receipt smaller than 50 MB.');
     const ext=(file.name||'').split('.').pop().toLowerCase();
@@ -47,7 +47,15 @@ export class Store {
     const digest=Array.from(new Uint8Array(hash),n=>n.toString(16).padStart(2,'0')).join('');
     const row={id:crypto.randomUUID(),name:file.name,ext,blob:file,digest,
       savedAt:new Date().toISOString(),state:'saved',collection,originalBlob};
-    await this.put(row); return row;
+    if(finishDraft){
+      const db=await this.db();
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction(['receipts','settings'],'readwrite');
+        tx.objectStore('receipts').put(row);tx.objectStore('settings').delete('receipt-draft');
+        tx.oncomplete=resolve;tx.onerror=tx.onabort=()=>reject(tx.error||new Error('Receipt could not be saved'));
+      });
+    }else await this.put(row);
+    return row;
   }
 }
 
