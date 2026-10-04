@@ -59,6 +59,14 @@ var Store = class {
     return this.operation("actions", "readwrite", (s) => s.put(row));
   }
   async action(row, action, fields = {}) {
+    for (const earlier of await this.actions()) {
+      if (earlier.doc_id !== row.id) continue;
+      if (["saved", "submitted"].includes(earlier.state)) throw new Error("A change for this document is already waiting for the Surface.");
+      if (earlier.state === "attention") {
+        earlier.state = "superseded";
+        await this.putAction(earlier);
+      }
+    }
     await this.putAction({ id: crypto.randomUUID(), action, doc_id: row.id, digest: row.digest, revision: row.revision, fields, state: "saved" });
   }
   async save(file, collection = null) {
@@ -111,7 +119,7 @@ async function deliver(store2, transport) {
   }
   const actions = await store2.actions();
   for (const action of actions) {
-    if (["done", "attention"].includes(action.state)) continue;
+    if (["done", "attention", "superseded"].includes(action.state)) continue;
     const result = await transport.actionResult(target, action.id);
     if (result) Object.assign(action, result);
     else if (action.state === "saved") {
@@ -15262,7 +15270,15 @@ var PublicClientApplication = class _PublicClientApplication {
 
 // src/graph.js
 var BASE = "https://graph.microsoft.com/v1.0";
-var scopes = ["Files.ReadWrite"];
+var scopes = ["Files.ReadWrite.All"];
+async function timedFetch(url, options = {}) {
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 45e3);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 var OneDrive = class {
   constructor(config) {
     this.config = config;
@@ -15304,8 +15320,10 @@ var OneDrive = class {
   }
   async request(path, options = {}) {
     if (!path.startsWith("/")) throw new Error("Invalid OneDrive path");
+    if (this.retryAfter > Date.now()) throw new Error("OneDrive delivery will retry shortly.");
     const token = await this.token();
-    const r = await fetch(BASE + path, { ...options, headers: { ...options.headers, Authorization: `Bearer ${token}` } });
+    const r = await timedFetch(BASE + path, { ...options, headers: { ...options.headers, Authorization: `Bearer ${token}` } });
+    if (r.status === 429) this.retryAfter = Date.now() + Math.max(30, Number(r.headers.get("Retry-After")) || 60) * 1e3;
     if (!r.ok) {
       const e = new Error(r.status === 401 ? "Sign in again to resume delivery." : "OneDrive is unavailable. Your receipts are saved here.");
       e.status = r.status;
@@ -15316,7 +15334,8 @@ var OneDrive = class {
   }
   item(target, path = "") {
     const base = `/drives/${encodeURIComponent(target.drive)}/items/${encodeURIComponent(target.id)}`;
-    return path ? `${base}:/${path.split("/").map(encodeURIComponent).join("/")}:` : base;
+    if (path && (path.includes("\\") || path.split("/").some((p) => ["", ".", ".."].includes(p)))) throw new Error("Invalid collection path");
+    return path ? `${base}:/${path.split("/").map(encodeURIComponent).join("/")}` : base;
   }
   async folders(target = null) {
     let path = target ? this.item(target) + "/children" : "/me/drive/root/children";
@@ -15337,7 +15356,7 @@ var OneDrive = class {
     const item = await this.request(this.item(target, path));
     const url = item["@microsoft.graph.downloadUrl"];
     if (!url || new URL(url).protocol !== "https:") throw new Error("Document is not available to download.");
-    const r = await fetch(url, { credentials: "omit" });
+    const r = await timedFetch(url, { credentials: "omit" });
     if (!r.ok) throw new Error("Download unavailable");
     return r;
   }
@@ -15358,7 +15377,7 @@ var OneDrive = class {
         body: JSON.stringify({ name: folder, folder: {}, "@microsoft.graph.conflictBehavior": "fail" })
       });
     }
-    await this.request(this.item(target, folder + "/" + name3) + "/content", {
+    await this.request(this.item(target, folder + "/" + name3) + ":/content", {
       method: "PUT",
       headers: { "Content-Type": blob.type || "application/octet-stream" },
       body: blob
@@ -15391,6 +15410,7 @@ var say = (text) => {
 var labels = { saved: "Saved here", submitted: "Waiting for Surface", review: "Review", filed: "Filed" };
 async function render() {
   const catalog = await store.get("catalog"), local = await store.list();
+  const waiting = new Set((await store.actions()).filter((a) => ["saved", "submitted"].includes(a.state)).map((a) => a.doc_id));
   const known = /* @__PURE__ */ new Set([...(catalog?.documents || []).map((r) => r.digest), ...catalog?.removed || []]);
   const rows = [...local.filter((r) => !known.has(r.digest)), ...catalog?.documents || []];
   const terms = $("search").value.toLowerCase().split(/\s+/).filter(Boolean);
@@ -15419,6 +15439,7 @@ async function render() {
     const badge = document.createElement("span");
     badge.className = "badge";
     badge.textContent = labels[state] || state;
+    if (waiting.has(row.id)) badge.textContent = "Change waiting";
     info.append(title, detail);
     button.append(icon, info, badge);
     button.onclick = () => row.revision ? review(row) : openDocument(row);
@@ -15489,7 +15510,7 @@ async function reviewAction(action) {
     say("Change saved here. It will apply when the Surface is available.");
     await sync();
   } catch (e) {
-    say("The change could not be saved. Please try again.");
+    say(e.message || "The change could not be saved. Please try again.");
   }
 }
 $("review-form").onsubmit = (event) => {
@@ -15536,6 +15557,10 @@ async function sync() {
   if (busy || !drive) return;
   busy = true;
   try {
+    if (!drive.config.clientId) {
+      say("Setup in progress. Receipts can be saved here; OneDrive delivery is not connected yet.");
+      return;
+    }
     if (!navigator.onLine) {
       say("Saved on this device. Reopen PaperDrop when you\u2019re online to send waiting receipts.");
       return;
@@ -15626,7 +15651,7 @@ async function start() {
     const config = await fetch("./config.json").then((r) => r.json());
     drive = new OneDrive(config);
     await drive.init();
-    if (!config.clientId) $("setup-note").textContent = "Installation in progress: the Microsoft account connection still needs to be registered. Capture works locally; OneDrive delivery is not enabled yet.";
+    $("setup-note").textContent = !config.clientId ? "Installation in progress: the Microsoft account connection still needs to be registered. Capture works locally; OneDrive delivery is not enabled yet." : "Microsoft permission covers files you can access in OneDrive, including shared files. PaperDrop uses the collection folder you select.";
     if ("serviceWorker" in navigator) await navigator.serviceWorker.register("./sw.js");
     await sync();
     setInterval(sync, 3e4);

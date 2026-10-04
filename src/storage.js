@@ -30,6 +30,11 @@ export class Store {
   actions(){return this.operation('actions','readonly',s=>s.getAll());}
   putAction(row){return this.operation('actions','readwrite',s=>s.put(row));}
   async action(row,action,fields={}) {
+    for(const earlier of await this.actions()){
+      if(earlier.doc_id!==row.id)continue;
+      if(['saved','submitted'].includes(earlier.state))throw new Error('A change for this document is already waiting for the Surface.');
+      if(earlier.state==='attention'){earlier.state='superseded';await this.putAction(earlier);}
+    }
     await this.putAction({id:crypto.randomUUID(),action,doc_id:row.id,digest:row.digest,revision:row.revision,fields,state:'saved'});
   }
   async save(file,collection=null) {
@@ -70,7 +75,7 @@ export async function deliver(store,transport) {
   }
   const actions=await store.actions();
   for(const action of actions){
-    if(['done','attention'].includes(action.state))continue;
+    if(['done','attention','superseded'].includes(action.state))continue;
     const result=await transport.actionResult(target,action.id);
     if(result)Object.assign(action,result);
     else if(action.state==='saved'){await transport.submitAction(target,action);action.state='submitted';}

@@ -7,6 +7,7 @@ const labels={saved:'Saved here',submitted:'Waiting for Surface',review:'Review'
 
 async function render(){
   const catalog=await store.get('catalog'), local=await store.list();
+  const waiting=new Set((await store.actions()).filter(a=>['saved','submitted'].includes(a.state)).map(a=>a.doc_id));
   const known=new Set([...(catalog?.documents||[]).map(r=>r.digest),...(catalog?.removed||[])]);
   const rows=[...local.filter(r=>!known.has(r.digest)),...(catalog?.documents||[])];
   const terms=$('search').value.toLowerCase().split(/\s+/).filter(Boolean);
@@ -23,6 +24,7 @@ async function render(){
     const title=document.createElement('span');title.className='doc-title';title.textContent=row.filename||row.name;
     const detail=document.createElement('span');detail.className='doc-detail';detail.textContent=[row.vendor,row.date,row.amount?`$${row.amount}`:null].filter(Boolean).join(' · ')||new Date(row.savedAt).toLocaleString();
     const badge=document.createElement('span');badge.className='badge';badge.textContent=labels[state]||state;
+    if(waiting.has(row.id))badge.textContent='Change waiting';
     info.append(title,detail);button.append(icon,info,badge);button.onclick=()=>row.revision?review(row):openDocument(row);container.append(button);
   }
   if(!container.children.length){const empty=document.createElement('p');empty.className='empty';empty.textContent=terms.length?'No matching documents.':'Your receipts will appear here.\nStart with a photo or a file.';container.append(empty);}
@@ -63,7 +65,7 @@ async function reviewAction(action){
   try{
     await store.action(reviewRow,action,fields);$('review-dialog').close();
     say('Change saved here. It will apply when the Surface is available.');await sync();
-  }catch(e){say('The change could not be saved. Please try again.');}
+  }catch(e){say(e.message||'The change could not be saved. Please try again.');}
 }
 $('review-form').onsubmit=event=>{event.preventDefault();reviewAction('file');};
 $('review-open').onclick=()=>openDocument(reviewRow);
@@ -95,6 +97,7 @@ async function capture(event){
 async function sync(){
   if(busy||!drive)return;busy=true;
   try{
+    if(!drive.config.clientId){say('Setup in progress. Receipts can be saved here; OneDrive delivery is not connected yet.');return;}
     if(!navigator.onLine){say('Saved on this device. Reopen PaperDrop when you’re online to send waiting receipts.');return;}
     const run=()=>deliver(store,drive);
     const result=navigator.locks?await navigator.locks.request('paperdrop-delivery',{ifAvailable:true},lock=>lock?run():null):await run();
@@ -141,7 +144,7 @@ async function start(){
   try{
     await render();
     const config=await fetch('./config.json').then(r=>r.json());drive=new OneDrive(config);await drive.init();
-    if(!config.clientId)$('setup-note').textContent='Installation in progress: the Microsoft account connection still needs to be registered. Capture works locally; OneDrive delivery is not enabled yet.';
+    $('setup-note').textContent=!config.clientId?'Installation in progress: the Microsoft account connection still needs to be registered. Capture works locally; OneDrive delivery is not enabled yet.':'Microsoft permission covers files you can access in OneDrive, including shared files. PaperDrop uses the collection folder you select.';
     if('serviceWorker' in navigator)await navigator.serviceWorker.register('./sw.js');
     await sync();setInterval(sync,30000);
   }catch(e){say('PaperDrop could not finish opening. Your saved receipts have not been removed. '+e.message);}

@@ -1,6 +1,11 @@
 import {PublicClientApplication,InteractionRequiredAuthError} from '@azure/msal-browser';
 const BASE='https://graph.microsoft.com/v1.0';
-const scopes=['Files.ReadWrite'];
+// Shared collections require the delegated scope covering files shared with the user.
+const scopes=['Files.ReadWrite.All'];
+async function timedFetch(url,options={}){
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),45000);
+  try{return await fetch(url,{...options,signal:controller.signal});}finally{clearTimeout(timeout);}
+}
 export class OneDrive {
   constructor(config){this.config=config;}
   async init(){
@@ -24,14 +29,17 @@ export class OneDrive {
   }
   async request(path,options={}){
     if(!path.startsWith('/'))throw new Error('Invalid OneDrive path');
+    if(this.retryAfter>Date.now())throw new Error('OneDrive delivery will retry shortly.');
     const token=await this.token();
-    const r=await fetch(BASE+path,{...options,headers:{...options.headers,Authorization:`Bearer ${token}`}});
+    const r=await timedFetch(BASE+path,{...options,headers:{...options.headers,Authorization:`Bearer ${token}`}});
+    if(r.status===429)this.retryAfter=Date.now()+Math.max(30,Number(r.headers.get('Retry-After'))||60)*1000;
     if(!r.ok){const e=new Error(r.status===401?'Sign in again to resume delivery.':'OneDrive is unavailable. Your receipts are saved here.');e.status=r.status;e.authRequired=r.status===401;throw e;}
     return r.status===204?null:r.json();
   }
   item(target,path=''){
     const base=`/drives/${encodeURIComponent(target.drive)}/items/${encodeURIComponent(target.id)}`;
-    return path?`${base}:/${path.split('/').map(encodeURIComponent).join('/')}:`:base;
+    if(path&&(path.includes('\\')||path.split('/').some(p=>['','.','..'].includes(p))))throw new Error('Invalid collection path');
+    return path?`${base}:/${path.split('/').map(encodeURIComponent).join('/')}`:base;
   }
   async folders(target=null){
     let path=target?this.item(target)+'/children':'/me/drive/root/children';let items=[];
@@ -52,7 +60,7 @@ export class OneDrive {
     const url=item['@microsoft.graph.downloadUrl'];
     if(!url||new URL(url).protocol!=='https:')throw new Error('Document is not available to download.');
     // Pre-authorized URL: never forward the Microsoft access token to a storage host.
-    const r=await fetch(url,{credentials:'omit'});if(!r.ok)throw new Error('Download unavailable');return r;
+    const r=await timedFetch(url,{credentials:'omit'});if(!r.ok)throw new Error('Download unavailable');return r;
   }
   async catalog(target){return (await this.download(target,'PaperDrop Catalog/catalog.json')).json();}
   async upload(target,name,blob){
@@ -62,7 +70,7 @@ export class OneDrive {
     try {await this.request(this.item(target,folder));}
     catch(e){if(e.status!==404)throw e;await this.request(this.item(target)+'/children',{
       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:folder,folder:{},'@microsoft.graph.conflictBehavior':'fail'})});}
-    await this.request(this.item(target,folder+'/'+name)+'/content',{
+    await this.request(this.item(target,folder+'/'+name)+':/content',{
       method:'PUT',headers:{'Content-Type':blob.type||'application/octet-stream'},body:blob});
   }
   async submitAction(target,action){return this.uploadInto(target,'PaperDrop Actions',action.id+'.json',new Blob([JSON.stringify(action)],{type:'application/json'}));}

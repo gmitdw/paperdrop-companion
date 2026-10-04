@@ -15,7 +15,9 @@ client ID. Do not treat this installation preview as a completed shared deployme
 Run `npm ci`, `npm test`, and `npm run build`. Copy `dist/` into `docs/` for GitHub
 Pages. Register the exact Pages URL (with trailing slash) as a Microsoft SPA
 redirect URI supporting personal Microsoft accounts. There is no client secret.
-The delegated permission is Files.ReadWrite. The user selects the shared folder.
+The delegated permission is Files.ReadWrite.All, to include shared collections.
+Microsoft consent covers all files the user can access; the app operates on the
+collection folder the user selects. No application-only permission is requested.
 
 ## Storage and privacy
 
