@@ -6,9 +6,7 @@ before delivery. OCR and the PostgreSQL index run on the owner's Windows compute
 
 ## Deployment status
 
-The Microsoft app registration is still pending. The current build saves receipts
-locally, but OneDrive delivery is not enabled until `config.json` has the registered
-client ID. Do not treat this installation preview as a completed shared deployment.
+Microsoft sign-in and OneDrive delivery are configured. On October 4, 2026, a synthetic PDF was captured through the published website, uploaded to the selected RECEIPTS collection, processed and named by the Surface, and moved to recoverable Trash after verification. Real iPhone camera and Home Screen acceptance remain to be checked on the device.
 
 ## Development
 
