@@ -19,10 +19,10 @@ async function render(){
     const haystack=[row.filename,row.name,row.vendor,row.date,row.amount,row.kind,row.text].join(' ').toLowerCase();
     if(!terms.every(t=>haystack.includes(t)))continue;
     const button=document.createElement('button');button.className='document';
-    const icon=document.createElement('span');icon.className='doc-icon';icon.textContent='â–¤';icon.setAttribute('aria-hidden','true');
+    const icon=document.createElement('span');icon.className='doc-icon';icon.textContent='▤';icon.setAttribute('aria-hidden','true');
     const info=document.createElement('span');info.className='doc-info';
     const title=document.createElement('span');title.className='doc-title';title.textContent=row.filename||row.name;
-    const detail=document.createElement('span');detail.className='doc-detail';detail.textContent=[row.vendor,row.date,row.amount?`$${row.amount}`:null].filter(Boolean).join(' Â· ')||new Date(row.savedAt).toLocaleString();
+    const detail=document.createElement('span');detail.className='doc-detail';detail.textContent=[row.vendor,row.date,row.amount?`$${row.amount}`:null].filter(Boolean).join(' · ')||new Date(row.savedAt).toLocaleString();
     const badge=document.createElement('span');badge.className='badge';badge.textContent=labels[state]||state;
     if(waiting.has(row.id))badge.textContent='Change waiting';
     info.append(title,detail);button.append(icon,info,badge);button.onclick=()=>openDocument(row);
@@ -43,7 +43,7 @@ async function openDocument(row){
       const key='pdf:'+row.digest+':'+row.pdf;
       blob=await store.get(key);
       if(!blob){
-        say('Downloading your documentâ€¦');
+        say('Downloading your document…');
         const target=await store.get('collection');if(!target)throw new Error('Connect OneDrive to open this document.');
         blob=await (await drive.download(target,row.pdf)).blob();await store.set(key,blob);
       }
@@ -102,7 +102,7 @@ async function capture(event){
   try{
     const target=await store.get('collection');
     for(let file of files){
-      say('Saving your receipt on this deviceâ€¦');
+      say('Saving your receipt on this device…');
       // Safari can decode some camera formats that the desktop OCR cannot read.
       if(/\.(heic|heif)$/i.test(file.name)){
         const bitmap=await createImageBitmap(file),canvas=document.createElement('canvas');
@@ -123,7 +123,7 @@ async function sync(){
   if(busy||!drive)return;busy=true;
   try{
     if(!drive.config.clientId){say('Setup in progress. Receipts can be saved here; OneDrive delivery is not connected yet.');return;}
-    if(!navigator.onLine){say('Saved on this device. Reopen PaperDrop when youâ€™re online to send waiting receipts.');return;}
+    if(!navigator.onLine){say('Saved on this device. Reopen PaperDrop when you’re online to send waiting receipts.');return;}
     const run=()=>deliver(store,drive);
     const result=navigator.locks?await navigator.locks.request('paperdrop-delivery',{ifAvailable:true},lock=>lock?run():null):await run();
     if(!result)return;
@@ -143,7 +143,7 @@ async function showFolders(){
   $('folder-current').textContent=current?.name||'OneDrive';$('folder-use').disabled=!current;
   $('folder-back').disabled=!folderStack.length;$('folders').replaceChildren();
   const folders=await drive.folders(current);
-  for(const folder of folders){const button=document.createElement('button');button.textContent='â–¸ '+folder.name;
+  for(const folder of folders){const button=document.createElement('button');button.textContent='▸ '+folder.name;
     button.onclick=async()=>{folderStack.push(folder);try{await showFolders();}catch(e){say(e.message);}};$('folders').append(button);}
   if(!folders.length)$('folders').textContent='No subfolders. Use this folder if it is your shared collection.';
 }
