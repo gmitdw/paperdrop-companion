@@ -25,13 +25,18 @@ async function render(){
     const detail=document.createElement('span');detail.className='doc-detail';detail.textContent=[row.vendor,row.date,row.amount?`$${row.amount}`:null].filter(Boolean).join(' · ')||new Date(row.savedAt).toLocaleString();
     const badge=document.createElement('span');badge.className='badge';badge.textContent=labels[state]||state;
     if(waiting.has(row.id))badge.textContent='Change waiting';
-    info.append(title,detail);button.append(icon,info,badge);button.onclick=()=>row.revision?review(row):openDocument(row);container.append(button);
+    info.append(title,detail);button.append(icon,info,badge);button.onclick=()=>openDocument(row);
+    const item=document.createElement('div');item.className='document-row';item.append(button);
+    if(row.revision){const edit=document.createElement('button');edit.className='review-button';edit.textContent='Review';edit.setAttribute('aria-label','Review '+(row.filename||row.name));edit.onclick=()=>review(row);item.append(edit);}
+    container.append(item);
   }
   if(!container.children.length){const empty=document.createElement('p');empty.className='empty';empty.textContent=terms.length?'No matching documents.':'Your receipts will appear here.\nStart with a photo or a file.';container.append(empty);}
   $('catalog-date').textContent=catalog?.updated?`Collection updated ${new Date(catalog.updated).toLocaleString()}.`:'Saved receipts stay here while the shared collection connects.';
 }
 
 async function openDocument(row){
+  const viewer=window.open('about:blank','_blank');
+  if(viewer)viewer.opener=null;
   try{
     let blob=row.blob;
     if(!blob){
@@ -44,17 +49,26 @@ async function openDocument(row){
       }
     }
     const url=URL.createObjectURL(blob),link=document.createElement('a');
-    link.href=url;link.download=row.filename||row.name;link.target='_blank';link.rel='noopener';
-    document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+    link.href=url;link.target='_blank';link.rel='noopener';
+    if(viewer)viewer.location.replace(url);else {document.body.append(link);link.click();link.remove();}
+    setTimeout(()=>URL.revokeObjectURL(url),300000);
     say('Document opened. A copy is available here offline.');
-  }catch(e){say(e.authRequired?e.message:'This document is not downloaded here yet. Reconnect to the internet and try again.');}
+  }catch(e){if(viewer)viewer.close();say(e.authRequired?e.message:'This document is not downloaded here yet. Reconnect to the internet and try again.');}
 }
 
 function review(row){
   reviewRow=row;$('review-party').value=row.vendor;$('review-date').value=row.date;
   $('review-amount').value=row.amount;$('review-kind').value=row.kind;$('review-reasons').textContent=row.reasons||'';
-  $('review-dialog').showModal();
+  setReviewEditing(false);$('review-dialog').showModal();$('review-title').focus({preventScroll:true});
 }
+function setReviewEditing(editing){
+  for(const id of ['review-party','review-date','review-amount'])$(id).readOnly=!editing;
+  $('review-kind').disabled=!editing;$('review-edit').hidden=editing;
+}
+$('review-edit').onclick=()=>setReviewEditing(true);
+let reviewBackdrop=false;
+$('review-dialog').addEventListener('pointerdown',event=>{const r=$('review-dialog').getBoundingClientRect();reviewBackdrop=event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom;});
+$('review-dialog').addEventListener('click',event=>{const r=$('review-dialog').getBoundingClientRect();if(reviewBackdrop&&(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom))$('review-dialog').close();reviewBackdrop=false;});
 async function reviewAction(action){
   const fields={party:$('review-party').value.trim(),doc_date:$('review-date').value,
     amount:$('review-amount').value.replace(/[$,]/g,'').trim(),kind:$('review-kind').value};

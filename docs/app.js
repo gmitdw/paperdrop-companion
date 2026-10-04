@@ -15442,8 +15442,19 @@ async function render() {
     if (waiting.has(row.id)) badge.textContent = "Change waiting";
     info.append(title, detail);
     button.append(icon, info, badge);
-    button.onclick = () => row.revision ? review(row) : openDocument(row);
-    container.append(button);
+    button.onclick = () => openDocument(row);
+    const item = document.createElement("div");
+    item.className = "document-row";
+    item.append(button);
+    if (row.revision) {
+      const edit = document.createElement("button");
+      edit.className = "review-button";
+      edit.textContent = "Review";
+      edit.setAttribute("aria-label", "Review " + (row.filename || row.name));
+      edit.onclick = () => review(row);
+      item.append(edit);
+    }
+    container.append(item);
   }
   if (!container.children.length) {
     const empty = document.createElement("p");
@@ -15454,6 +15465,8 @@ async function render() {
   $("catalog-date").textContent = catalog?.updated ? `Collection updated ${new Date(catalog.updated).toLocaleString()}.` : "Saved receipts stay here while the shared collection connects.";
 }
 async function openDocument(row) {
+  const viewer = window.open("about:blank", "_blank");
+  if (viewer) viewer.opener = null;
   try {
     let blob = row.blob;
     if (!blob) {
@@ -15469,15 +15482,18 @@ async function openDocument(row) {
     }
     const url = URL.createObjectURL(blob), link = document.createElement("a");
     link.href = url;
-    link.download = row.filename || row.name;
     link.target = "_blank";
     link.rel = "noopener";
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 6e4);
+    if (viewer) viewer.location.replace(url);
+    else {
+      document.body.append(link);
+      link.click();
+      link.remove();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 3e5);
     say("Document opened. A copy is available here offline.");
   } catch (e) {
+    if (viewer) viewer.close();
     say(e.authRequired ? e.message : "This document is not downloaded here yet. Reconnect to the internet and try again.");
   }
 }
@@ -15488,8 +15504,26 @@ function review(row) {
   $("review-amount").value = row.amount;
   $("review-kind").value = row.kind;
   $("review-reasons").textContent = row.reasons || "";
+  setReviewEditing(false);
   $("review-dialog").showModal();
+  $("review-title").focus({ preventScroll: true });
 }
+function setReviewEditing(editing) {
+  for (const id of ["review-party", "review-date", "review-amount"]) $(id).readOnly = !editing;
+  $("review-kind").disabled = !editing;
+  $("review-edit").hidden = editing;
+}
+$("review-edit").onclick = () => setReviewEditing(true);
+var reviewBackdrop = false;
+$("review-dialog").addEventListener("pointerdown", (event) => {
+  const r = $("review-dialog").getBoundingClientRect();
+  reviewBackdrop = event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom;
+});
+$("review-dialog").addEventListener("click", (event) => {
+  const r = $("review-dialog").getBoundingClientRect();
+  if (reviewBackdrop && (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom)) $("review-dialog").close();
+  reviewBackdrop = false;
+});
 async function reviewAction(action) {
   const fields = {
     party: $("review-party").value.trim(),
