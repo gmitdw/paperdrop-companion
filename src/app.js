@@ -1,3 +1,4 @@
+import {cropReceipt} from './receipt-crop.js';
 import {Store,deliver} from './storage.js';
 import {OneDrive} from './graph.js';
 const $=id=>document.getElementById(id), store=new Store();
@@ -103,15 +104,12 @@ async function capture(event){
     const target=await store.get('collection');
     for(let file of files){
       say('Saving your receipt on this device…');
-      // Safari can decode some camera formats that the desktop OCR cannot read.
-      if(/\.(heic|heif)$/i.test(file.name)){
-        const bitmap=await createImageBitmap(file),canvas=document.createElement('canvas');
-        canvas.width=bitmap.width;canvas.height=bitmap.height;canvas.getContext('2d').drawImage(bitmap,0,0);bitmap.close();
-        const jpeg=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',.94));
-        if(!jpeg)throw new Error('This photo could not be converted. Please take a photo in PaperDrop.');
-        file=new File([jpeg],file.name.replace(/\.[^.]+$/,'.jpg'),{type:'image/jpeg'});
+      const original=file;
+      if(/\.(jpe?g|png|webp|heic|heif)$/i.test(file.name)||event.target.id==='camera'){
+        file=await cropReceipt(file);if(!file)continue;
       }
-      await store.save(file,target);count++;
+      await store.save(file,target,file!==original?original:null);count++;
+
     }
     say(`Saved ${count} receipt${count===1?'':'s'} on this device. Delivery is automatic while PaperDrop is open.`);
     await navigator.storage?.persist?.();await render();await sync();

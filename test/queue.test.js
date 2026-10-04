@@ -38,3 +38,14 @@ test('review changes persist, deliver once, and retain a conflict result',async(
  transport.actionResult=async(t,id)=>({id,state:'attention',message:'Changed elsewhere'});
  await deliver(store,transport);assert.equal((await store.actions())[0].state,'attention');
 });
+
+test('cropped receipt keeps the original locally and uploads only the crop',async()=>{
+ const store=fresh();await store.set('collection',target);
+ const original=new File(['original photo bytes'],'image.jpg',{type:'image/jpeg'});
+ const cropped=new File(['cropped photo bytes'],'image-cropped.jpg',{type:'image/jpeg'});
+ await store.save(cropped,target,original);
+ const reopened=new Store(store.name),row=(await reopened.list())[0];
+ assert.equal(await row.originalBlob.text(),'original photo bytes');
+ let sent;await deliver(reopened,{catalog:async()=>({version:1,documents:[]}),upload:async(t,n,blob)=>{sent=await blob.text();}});
+ assert.equal(sent,'cropped photo bytes');assert.equal(await (await reopened.list())[0].originalBlob.text(),'original photo bytes');
+});

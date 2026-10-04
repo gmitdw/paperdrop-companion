@@ -170,7 +170,7 @@ function straighten(source, q) {
 }
 async function cropReceipt(file) {
   const dialog = $("crop-dialog"), screen = $("crop-canvas"), ctx = screen.getContext("2d");
-  let source, preview, corners = fullQuad(), editing = false, drag = -1, rotation = 0, working = true, finish;
+  let source, preview, corners = fullQuad(), editing = false, drag = -1, rotation = 0, working = false, finish;
   const done = new Promise((resolve) => finish = resolve);
   const note = (text) => $("crop-note").textContent = text;
   function draw() {
@@ -220,7 +220,6 @@ async function cropReceipt(file) {
       preview = rotated(straighten(source, corners));
       editing = false;
       draw();
-      $("crop-save").textContent = "Save receipt";
       $("crop-adjust").textContent = "Adjust edges";
       note("Check that the whole receipt is visible, then save.");
     } catch (e) {
@@ -249,7 +248,6 @@ async function cropReceipt(file) {
     }
     editing = true;
     draw();
-    $("crop-save").textContent = "Preview crop";
     $("crop-adjust").textContent = "Preview crop";
     note("Drag each corner to the edge of the receipt.");
   };
