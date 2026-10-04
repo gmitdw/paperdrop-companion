@@ -1,0 +1,10 @@
+import {build} from 'esbuild';
+import {readFile,writeFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+await build({entryPoints:['src/app.js'],bundle:true,format:'esm',target:'safari16',outfile:'dist/app.js'});
+const hash=createHash('sha256');
+for(const file of ['app.js','style.css','index.html','config.json','manifest.webmanifest'])hash.update(await readFile('dist/'+file));
+const version=hash.digest('hex').slice(0,16);
+const sw=(await readFile('dist/sw.js','utf8')).replace(/const CACHE='[^']+';/,`const CACHE='paperdrop-shell-${version}';`);
+await writeFile('dist/sw.js',sw);
+console.log('Built PaperDrop shell '+version);

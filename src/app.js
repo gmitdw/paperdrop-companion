@@ -1,0 +1,149 @@
+import {Store,deliver} from './storage.js';
+import {OneDrive} from './graph.js';
+const $=id=>document.getElementById(id), store=new Store();
+let drive,filter='all',busy=false,folderStack=[],reviewRow;
+const say=text=>{$('status').textContent=text;};
+const labels={saved:'Saved here',submitted:'Waiting for Surface',review:'Review',filed:'Filed'};
+
+async function render(){
+  const catalog=await store.get('catalog'), local=await store.list();
+  const known=new Set([...(catalog?.documents||[]).map(r=>r.digest),...(catalog?.removed||[])]);
+  const rows=[...local.filter(r=>!known.has(r.digest)),...(catalog?.documents||[])];
+  const terms=$('search').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const container=$('documents');container.replaceChildren();
+  for(const row of rows){
+    const state=row.status||row.state;
+    if(filter==='waiting'&&['filed','review'].includes(state))continue;
+    if(['filed','review'].includes(filter)&&state!==filter)continue;
+    const haystack=[row.filename,row.name,row.vendor,row.date,row.amount,row.kind,row.text].join(' ').toLowerCase();
+    if(!terms.every(t=>haystack.includes(t)))continue;
+    const button=document.createElement('button');button.className='document';
+    const icon=document.createElement('span');icon.className='doc-icon';icon.textContent='▤';icon.setAttribute('aria-hidden','true');
+    const info=document.createElement('span');info.className='doc-info';
+    const title=document.createElement('span');title.className='doc-title';title.textContent=row.filename||row.name;
+    const detail=document.createElement('span');detail.className='doc-detail';detail.textContent=[row.vendor,row.date,row.amount?`$${row.amount}`:null].filter(Boolean).join(' · ')||new Date(row.savedAt).toLocaleString();
+    const badge=document.createElement('span');badge.className='badge';badge.textContent=labels[state]||state;
+    info.append(title,detail);button.append(icon,info,badge);button.onclick=()=>row.revision?review(row):openDocument(row);container.append(button);
+  }
+  if(!container.children.length){const empty=document.createElement('p');empty.className='empty';empty.textContent=terms.length?'No matching documents.':'Your receipts will appear here.\nStart with a photo or a file.';container.append(empty);}
+  $('catalog-date').textContent=catalog?.updated?`Collection updated ${new Date(catalog.updated).toLocaleString()}.`:'Saved receipts stay here while the shared collection connects.';
+}
+
+async function openDocument(row){
+  try{
+    let blob=row.blob;
+    if(!blob){
+      const key='pdf:'+row.digest+':'+row.pdf;
+      blob=await store.get(key);
+      if(!blob){
+        say('Downloading your document…');
+        const target=await store.get('collection');if(!target)throw new Error('Connect OneDrive to open this document.');
+        blob=await (await drive.download(target,row.pdf)).blob();await store.set(key,blob);
+      }
+    }
+    const url=URL.createObjectURL(blob),link=document.createElement('a');
+    link.href=url;link.download=row.filename||row.name;link.target='_blank';link.rel='noopener';
+    document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+    say('Document opened. A copy is available here offline.');
+  }catch(e){say(e.authRequired?e.message:'This document is not downloaded here yet. Reconnect to the internet and try again.');}
+}
+
+function review(row){
+  reviewRow=row;$('review-party').value=row.vendor;$('review-date').value=row.date;
+  $('review-amount').value=row.amount;$('review-kind').value=row.kind;$('review-reasons').textContent=row.reasons||'';
+  $('review-dialog').showModal();
+}
+async function reviewAction(action){
+  const fields={party:$('review-party').value.trim(),doc_date:$('review-date').value,
+    amount:$('review-amount').value.replace(/[$,]/g,'').trim(),kind:$('review-kind').value};
+  if(action==='file'&&fields.amount){
+    if(!/^-?\d+(\.\d{1,2})?$/.test(fields.amount)){say('Enter a valid receipt amount.');return;}
+    fields.amount=Number(fields.amount).toFixed(2);
+  }
+  try{
+    await store.action(reviewRow,action,fields);$('review-dialog').close();
+    say('Change saved here. It will apply when the Surface is available.');await sync();
+  }catch(e){say('The change could not be saved. Please try again.');}
+}
+$('review-form').onsubmit=event=>{event.preventDefault();reviewAction('file');};
+$('review-open').onclick=()=>openDocument(reviewRow);
+$('review-close').onclick=()=>$('review-dialog').close();
+$('review-trash').onclick=()=>{if(confirm('Move this document to Trash? It can be restored on the Surface.'))reviewAction('trash');};
+
+async function capture(event){
+  const files=[...event.target.files];let count=0;
+  try{
+    const target=await store.get('collection');
+    for(let file of files){
+      say('Saving your receipt on this device…');
+      // Safari can decode some camera formats that the desktop OCR cannot read.
+      if(/\.(heic|heif)$/i.test(file.name)){
+        const bitmap=await createImageBitmap(file),canvas=document.createElement('canvas');
+        canvas.width=bitmap.width;canvas.height=bitmap.height;canvas.getContext('2d').drawImage(bitmap,0,0);bitmap.close();
+        const jpeg=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',.94));
+        if(!jpeg)throw new Error('This photo could not be converted. Please take a photo in PaperDrop.');
+        file=new File([jpeg],file.name.replace(/\.[^.]+$/,'.jpg'),{type:'image/jpeg'});
+      }
+      await store.save(file,target);count++;
+    }
+    say(`Saved ${count} receipt${count===1?'':'s'} on this device. Delivery is automatic while PaperDrop is open.`);
+    await navigator.storage?.persist?.();await render();await sync();
+  }catch(e){say(`Saved ${count}. ${e.name==='QuotaExceededError'?'This device is out of storage. The remaining receipt was not saved.':e.message||'The next receipt could not be saved. Please try again.'}`);await render();}
+  finally{event.target.value='';}
+}
+
+async function sync(){
+  if(busy||!drive)return;busy=true;
+  try{
+    if(!navigator.onLine){say('Saved on this device. Reopen PaperDrop when you’re online to send waiting receipts.');return;}
+    const run=()=>deliver(store,drive);
+    const result=navigator.locks?await navigator.locks.request('paperdrop-delivery',{ifAvailable:true},lock=>lock?run():null):await run();
+    if(!result)return;
+    const waiting=(await store.list()).filter(r=>r.state==='saved').length;
+    say(result.waiting?'Ready to save receipts. Connect OneDrive once to enable delivery.':waiting?'Receipts are saved here. Delivery will resume automatically.':'Your receipts are safely saved. The Surface processes new arrivals when it is available.');
+    const actions=await store.actions();
+    const attention=actions.find(a=>a.state==='attention');
+    if(attention)say(attention.message);
+    else if(actions.some(a=>['saved','submitted'].includes(a.state)))say('Your review changes are saved and waiting for the Surface.');
+    await render();
+  }catch(e){say(e.authRequired?e.message:'Your receipts are saved here. OneDrive delivery will retry automatically.');}
+  finally{busy=false;}
+}
+
+async function showFolders(){
+  const current=folderStack.at(-1)||null;
+  $('folder-current').textContent=current?.name||'OneDrive';$('folder-use').disabled=!current;
+  $('folder-back').disabled=!folderStack.length;$('folders').replaceChildren();
+  const folders=await drive.folders(current);
+  for(const folder of folders){const button=document.createElement('button');button.textContent='▸ '+folder.name;
+    button.onclick=async()=>{folderStack.push(folder);try{await showFolders();}catch(e){say(e.message);}};$('folders').append(button);}
+  if(!folders.length)$('folders').textContent='No subfolders. Use this folder if it is your shared collection.';
+}
+$('connect').onclick=async()=>{
+  try{
+    await drive.token();
+    if(await store.get('collection')){say('OneDrive is connected to your shared collection.');await sync();return;}
+    folderStack=[];$('folder-dialog').showModal();await showFolders();
+  }catch(e){if(e.authRequired)await drive.signIn().catch(e=>say(e.message));else say(e.message);}
+};
+$('folder-back').onclick=async()=>{folderStack.pop();await showFolders().catch(e=>say(e.message));};
+$('folder-cancel').onclick=()=>$('folder-dialog').close();
+$('folder-use').onclick=async()=>{
+  const target=folderStack.at(-1);if(!target)return;
+  await store.set('collection',target);$('folder-dialog').close();say('Collection connected.');await sync();
+};
+$('camera').onchange=capture;$('files').onchange=capture;$('refresh').onclick=sync;$('search').oninput=()=>render();
+document.querySelectorAll('[data-filter]').forEach(button=>button.onclick=()=>{
+  filter=button.dataset.filter;document.querySelectorAll('[data-filter]').forEach(b=>b.classList.toggle('selected',b===button));render();
+});
+window.addEventListener('online',sync);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')sync();});
+async function start(){
+  try{
+    await render();
+    const config=await fetch('./config.json').then(r=>r.json());drive=new OneDrive(config);await drive.init();
+    if(!config.clientId)$('setup-note').textContent='Installation in progress: the Microsoft account connection still needs to be registered. Capture works locally; OneDrive delivery is not enabled yet.';
+    if('serviceWorker' in navigator)await navigator.serviceWorker.register('./sw.js');
+    await sync();setInterval(sync,30000);
+  }catch(e){say('PaperDrop could not finish opening. Your saved receipts have not been removed. '+e.message);}
+}
+start();
