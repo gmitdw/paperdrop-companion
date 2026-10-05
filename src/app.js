@@ -76,7 +76,7 @@ $('options-dialog').addEventListener('click',event=>{const r=$('options-dialog')
 
 function review(row){
   reviewRow=row;$('review-party').value=row.vendor;$('review-date').value=row.date;
-  $('review-amount').value=row.amount;$('review-kind').value=({Receipt:'Document Uncategorized',Invoice:'Document Uncategorized',Statement:'Document Uncategorized','Tax document':'Tax Document','Medical document':'Medical Document',Document:'Document Uncategorized'}[row.kind]||row.kind);$('review-reasons').textContent=row.reasons||'';
+  $('review-amount').value=row.amount;$('review-kind').value=({'Personal Receipt':'Personal - Credit Card','Business Receipt':'Business - Credit Card','Personal Credit Card':'Personal - Credit Card',Receipt:'Personal - Credit Card',Invoice:'Document Uncategorized',Statement:'Document Uncategorized','Tax document':'Tax Document','Medical document':'Medical Document',Document:'Document Uncategorized'}[row.kind]||row.kind);$('review-reasons').textContent=row.reasons||'';
   setReviewEditing(false);$('review-dialog').showModal();$('review-title').focus({preventScroll:true});
 }
 function setReviewEditing(editing){
