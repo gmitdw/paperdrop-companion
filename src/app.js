@@ -1,3 +1,4 @@
+import {installItemReview} from './receipt-items.js';
 import {newestReceiptFirst} from './document-order.js';
 import {cropReceipt} from './receipt-crop.js';
 import {Store,deliver} from './storage.js';
@@ -5,6 +6,7 @@ import {OneDrive} from './graph.js';
 const $=id=>document.getElementById(id), store=new Store();
 let drive,filter='all',busy=false,folderStack=[],reviewRow;
 const say=text=>{$('status').textContent=text;};
+const showItems=installItemReview({store,sync,say,openDocument});
 const labels={saved:'Saved here',submitted:'Waiting for Surface',review:'Review',filed:'Filed'};
 
 async function render(){
@@ -65,6 +67,8 @@ function showOptions(row){
   $('options-dialog').showModal();$('options-review').focus({preventScroll:true});
 }
 $('options-review').onclick=()=>{$('options-dialog').close();review(optionsRow);};
+$('options-items').onclick=()=>{$('options-dialog').close();showItems(optionsRow);};
+$('review-items').onclick=()=>{$('review-dialog').close();showItems(reviewRow);};
 $('options-cancel').onclick=()=>$('options-dialog').close();
 let optionsBackdrop=false;
 $('options-dialog').addEventListener('pointerdown',event=>{const r=$('options-dialog').getBoundingClientRect();optionsBackdrop=event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom;});
