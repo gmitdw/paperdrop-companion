@@ -39,7 +39,7 @@ export async function cropReceipt(file,store,collection){
   const handles=[...dialog.querySelectorAll('.crop-handle')];
   let draft=await store.get('receipt-draft'),source,preview,corners=fullQuad(),editing=false,rotation=0,working=true,finish,index=0,editStart;
   if(file&&draft)throw new Error('Resume your unfinished receipt before starting another.');
-  if(file){draft={collection,sections:[{original:file}],index:0};await store.set('receipt-draft',draft);}
+  if(file){draft={collection,sections:[{original:file}],index:0};await store.set('receipt-draft',draft);draft=await store.get('receipt-draft');}
   if(!draft)return null;
   index=draft.index||0;
   const done=new Promise(resolve=>finish=resolve),note=text=>$('crop-note').textContent=text;
@@ -70,7 +70,7 @@ export async function cropReceipt(file,store,collection){
     }
   }
   function rotated(img){if(!rotation)return img;const c=canvas(rotation%2?img.height:img.width,rotation%2?img.width:img.height),x=c.getContext('2d');x.translate(c.width/2,c.height/2);x.rotate(rotation*Math.PI/2);x.drawImage(img,-img.width/2,-img.height/2);return c;}
-  async function persist(){draft.index=index;await store.set('receipt-draft',draft);}
+  async function persist(){draft.index=index;await store.set('receipt-draft',draft);draft=await store.get('receipt-draft');}
   async function makePreview(){
     working=true;controls();note('Straightening your receipt…');await pause();
     try{

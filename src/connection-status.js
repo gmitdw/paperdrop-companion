@@ -1,5 +1,6 @@
 export function connectionStatus(state){
   const states={
+    localfile:{title:'Older receipt needs retaking',text:'The saved file cannot be read on this device. Use its three-dot menu to remove it. New receipts can still upload.',action:null},
     checking:{title:'Checking OneDrive…',text:'Receipts are saved on this device until upload is confirmed.',action:null},
     uploading:{title:'Uploading receipt to OneDrive',text:'Keep PaperDrop open. Your saved receipt stays on this device until delivery is confirmed.',action:null},
     setup:{title:'Connect OneDrive to send receipts',text:'Complete this setup once. Until then, receipts stay only on this device.',action:'Connect OneDrive'},

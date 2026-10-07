@@ -72,3 +72,54 @@ test('unfinished sections survive reopening; completing a receipt atomically rem
  assert.equal(await reopened.get('receipt-draft'),undefined);
  assert.equal((await reopened.list()).length,1);assert.equal((await reopened.list())[0].originalBlob.length,2);
 });
+
+test('three-section draft and final PDF persist as bytes, survive reopen, and upload with all pages',async()=>{
+ const {receiptPdf}=await import('../src/receipt-pdf.js');
+ const store=fresh();await store.set('collection',target);
+ const sections=[1,2,3].map(n=>({width:120,height:300,original:new File(['original '+n],`photo${n}.jpg`,{type:'image/jpeg'}),blob:new Blob(['JPEG section '+n],{type:'image/jpeg'})}));
+ await store.set('receipt-draft',{sections,collection:target});
+ const rawDraft=await store.operation('settings','readonly',s=>s.get('receipt-draft'));
+ assert.ok(rawDraft.sections.every(s=>s.original.bytes instanceof ArrayBuffer&&s.blob.bytes instanceof ArrayBuffer));
+ const reopened=new Store(store.name),draft=await reopened.get('receipt-draft');
+ const pdf=await receiptPdf(draft.sections),expected=await pdf.arrayBuffer();
+ const row=await reopened.save(pdf,target,draft.sections.map(s=>s.original),true);
+ const raw=await store.operation('receipts','readonly',s=>s.get(row.id));
+ assert.ok(raw.blob.bytes instanceof ArrayBuffer);assert.ok(!(raw.blob instanceof Blob));
+ assert.ok(raw.originalBlob.every(p=>p.bytes instanceof ArrayBuffer));
+ const again=new Store(store.name);let uploaded;
+ await deliver(again,{catalog:async()=>null,upload:async(t,n,blob)=>{uploaded=await blob.arrayBuffer();}});
+ assert.deepEqual(uploaded,expected);
+ const text=new TextDecoder().decode(uploaded);
+ assert.match(text,/\/Count 3/);assert.ok(text.indexOf('JPEG section 1')<text.indexOf('JPEG section 2'));assert.ok(text.indexOf('JPEG section 2')<text.indexOf('JPEG section 3'));
+ assert.equal((await again.list())[0].state,'submitted');assert.equal(await again.get('receipt-draft'),undefined);
+});
+
+test('failed persisted-PDF verification retains draft; retry uses the same record',async()=>{
+ const store=fresh();await store.set('receipt-draft',{sections:[{original:receipt()}]});
+ const operation=store.operation.bind(store);let damage=true;
+ store.operation=async(name,mode,run)=>{
+   const result=await operation(name,mode,run);
+   if(damage&&name==='receipts'&&mode==='readonly'&&!Array.isArray(result)&&result?.blob?.bytes){
+     damage=false;new Uint8Array(result.blob.bytes)[0]^=255;
+   }
+   return result;
+ };
+ await assert.rejects(store.save(receipt(),target,null,true),/verification/);
+ assert.ok(await store.get('receipt-draft'));assert.equal((await store.list())[0].state,'saving');
+ await store.save(receipt(),target,null,true);
+ assert.equal((await store.list()).length,1);assert.equal((await store.list())[0].state,'saved');
+ assert.equal(await store.get('receipt-draft'),undefined);
+});
+
+test('unreadable old receipt does not block new receipts; local removal only deletes chosen record',async()=>{
+ const store=fresh();await store.set('collection',target);
+ const broken=await store.save(receipt(),target),good=await store.save(receipt(),target);
+ const list=store.list.bind(store);let reads=0;
+ store.list=async()=> (await list()).map(row=>row.id===broken.id?{...row,blob:{size:10,arrayBuffer:async()=>{reads++;throw new Error('The object cannot be found here.');}}}:row);
+ const sent=[];const transport={catalog:async()=>null,upload:async(t,name)=>sent.push(name)};
+ await assert.rejects(deliver(store,transport),e=>e.receiptReadError);
+ assert.deepEqual(sent,[`Receipt-${good.id}.pdf`]);
+ await assert.rejects(deliver(store,transport));assert.equal(reads,1);
+ await store.removeLocal(broken.id);assert.deepEqual((await list()).map(r=>r.id),[good.id]);
+ await deliver(store,transport);assert.equal(sent.length,1);
+});

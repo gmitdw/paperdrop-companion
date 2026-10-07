@@ -22,7 +22,7 @@ function showConnection(state,detail=''){
 connectionAction.onclick=()=>['signin','setup','folder'].includes(connectionState)?$('connect').click():sync();
 showConnection('checking');
 const showItems=installItemReview({store,sync,say,openDocument});
-const labels={saved:'Not uploaded',submitted:'Waiting for Surface',review:'Review',filed:'Filed'};
+const labels={saving:'Saving…',saved:'Not uploaded',submitted:'Waiting for Surface',review:'Review',filed:'Filed'};
 
 async function render(){
   $('resume-receipt').hidden=!(await store.get('receipt-draft'));
@@ -44,10 +44,24 @@ async function render(){
     const title=document.createElement('span');title.className='doc-title';title.textContent=row.filename||row.name;
     const detail=document.createElement('span');detail.className='doc-detail';detail.textContent=[row.vendor,row.date,row.amount?`$${row.amount}`:null].filter(Boolean).join(' · ')||new Date(row.savedAt).toLocaleString();
     const badge=document.createElement('span');badge.className='badge';badge.textContent=labels[state]||state;
+    if(store.unreadable.has(row.id))badge.textContent='Needs retake';
     if(waiting.has(row.id))badge.textContent='Change waiting';
     info.append(title,detail);button.append(icon,info,badge);button.onclick=()=>openDocument(row);
     const item=document.createElement('div');item.className='document-row';item.append(button);
     if(row.revision){const edit=document.createElement('button');edit.className='more-button';edit.textContent='•••';edit.setAttribute('aria-label','More options for '+(row.filename||row.name));edit.setAttribute('aria-haspopup','dialog');edit.onclick=()=>showOptions(row);item.append(edit);}
+    else if(row.blob){
+      const more=document.createElement('button');more.className='more-button';more.textContent='•••';
+      more.setAttribute('aria-label','More options for '+row.name);more.setAttribute('aria-expanded','false');
+      const remove=document.createElement('button');remove.textContent='Remove from this device';remove.hidden=true;
+      more.onclick=()=>{remove.hidden=!remove.hidden;more.setAttribute('aria-expanded',String(!remove.hidden));};
+      remove.onclick=async()=>{
+        if(busy){say('Please wait for the current delivery check to finish, then remove this receipt.');return;}
+        if(!confirm(`Remove ${row.name} from this device? Its locally saved copy and photos will be deleted. Any copy already uploaded to OneDrive will stay there.`))return;
+        try{await store.removeLocal(row.id);say('Removed from this device.');await render();await sync();}
+        catch(e){say('The receipt was not removed. '+e.message);}
+      };
+      item.append(more,remove);
+    }
     container.append(item);
   }
   if(!container.children.length){const empty=document.createElement('p');empty.className='empty';empty.textContent=terms.length?'No matching documents.':'Your receipts will appear here.\nStart with a photo or a file.';container.append(empty);}
@@ -157,7 +171,7 @@ async function sync(){
     if(attention)say(attention.message);
     else if(actions.some(a=>['saved','submitted'].includes(a.state)))say('Your review changes are saved and waiting for the Surface.');
     await render();
-  }catch(e){signInNeeded=!!e.authRequired;showConnection(signInNeeded?'signin':'error',!signInNeeded&&(e.deliveryError||e.receiptReadError)?e.message+' Receipts marked Not uploaded remain on this device.':'');say(e.authRequired?'Sign in is required to resume uploads.':'Delivery has not completed. See the OneDrive notice above.');}
+  }catch(e){signInNeeded=!!e.authRequired;showConnection(signInNeeded?'signin':e.receiptReadError?'localfile':'error',!signInNeeded&&(e.deliveryError||e.receiptReadError)?e.message:'');say(e.authRequired?'Sign in is required to resume uploads.':'Delivery has not completed. See the notice above.');}
   finally{busy=false;await render();}
 }
 
