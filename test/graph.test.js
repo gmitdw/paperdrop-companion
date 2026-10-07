@@ -12,3 +12,22 @@ test('upload uses a stable UUID filename and content endpoint',async()=>{
  assert.equal(calls.at(-1)[0],'/drives/d/items/i:/PaperDrop%20Inbox/Receipt-abc.pdf:/content');
  assert.equal(calls.at(-1)[1].method,'PUT');
 });
+
+test('blocked silent sign-in requests an explicit reconnect instead of retrying forever',async()=>{
+ const drive=new OneDrive({});
+ drive.auth={getActiveAccount:()=>({}),acquireTokenSilent:async()=>{const error=new Error('iframe timeout');error.errorCode='monitor_window_timeout';throw error;}};
+ await assert.rejects(drive.token(),error=>error.authRequired===true && error.message.includes('Sign in'));
+ drive.auth.acquireTokenSilent=async()=>{throw new Error('network offline');};
+ await assert.rejects(drive.token(),error=>!error.authRequired);
+});
+
+test('OneDrive rejection preserves a safe diagnostic code and does not expose server details',async()=>{
+ const drive=new OneDrive({});drive.token=async()=>'test-token';
+ const original=globalThis.fetch;
+ try{
+  globalThis.fetch=async()=>new Response(JSON.stringify({error:{code:'accessDenied',message:'private server details'}}),{status:403});
+  await assert.rejects(drive.request('/test'),e=>e.deliveryError && e.status===403 && e.message.includes('403 / accessDenied') && !e.message.includes('private'));
+  globalThis.fetch=async()=>{throw new TypeError('fetch failed');};
+  await assert.rejects(drive.request('/test'),e=>e.deliveryError && e.message.includes('Cannot reach OneDrive'));
+ }finally{globalThis.fetch=original;}
+});

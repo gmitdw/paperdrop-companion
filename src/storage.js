@@ -62,12 +62,14 @@ export class Store {
 export async function deliver(store,transport) {
   const target=await store.get('collection');
   if(!target) return {waiting:true};
-  let catalog;
+    let catalog,catalogUnavailable=false;
   try {
     catalog=await transport.catalog(target);
-    if(catalog?.version===1 && Array.isArray(catalog.documents)) await store.set('catalog',catalog);
+      if(catalog?.version===1 && Array.isArray(catalog.documents)) await store.set('catalog',catalog);
+      else catalogUnavailable=true;
   } catch(e) {
-    if(e.authRequired) throw e;
+      if(e.authRequired) throw e;
+      catalogUnavailable=true;
     // A temporarily unavailable catalog cannot prevent uploads.
   }
   const known=new Map((catalog?.documents||[]).map(r=>[r.digest,r]));
@@ -89,5 +91,5 @@ export async function deliver(store,transport) {
     else if(action.state==='saved'){await transport.submitAction(target,action);action.state='submitted';}
     await store.putAction(action);
   }
-  return {waiting:false};
+    return {waiting:false,catalogUnavailable};
 }

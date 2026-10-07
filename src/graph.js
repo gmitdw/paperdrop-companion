@@ -4,7 +4,9 @@ const BASE='https://graph.microsoft.com/v1.0';
 const scopes=['Files.ReadWrite.All'];
 async function timedFetch(url,options={}){
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),45000);
-  try{return await fetch(url,{...options,signal:controller.signal});}finally{clearTimeout(timeout);}
+  try{return await fetch(url,{...options,signal:controller.signal});}
+  catch(error){const e=new Error(error.name==='AbortError'?'OneDrive delivery timed out after 45 seconds. Keep PaperDrop open and tap Refresh to retry.':'Cannot reach OneDrive. Check the internet connection and tap Refresh.');e.deliveryError=true;throw e;}
+  finally{clearTimeout(timeout);}
 }
 export class OneDrive {
   constructor(config){this.config=config;}
@@ -25,7 +27,7 @@ export class OneDrive {
   async token(){
     if(!this.auth?.getActiveAccount()){const e=new Error('Connect OneDrive to deliver your saved receipts.');e.authRequired=true;throw e;}
     try{return (await this.auth.acquireTokenSilent({scopes,account:this.auth.getActiveAccount()})).accessToken;}
-    catch(e){if(e instanceof InteractionRequiredAuthError){e.authRequired=true;e.message='Sign in again to resume delivery. Your receipts are saved here.';}throw e;}
+    catch(e){if(e instanceof InteractionRequiredAuthError || ['monitor_window_timeout','iframe_closed_prematurely','silent_sso_error','no_tokens_found','refresh_token_expired'].includes(e.errorCode)){e.authRequired=true;e.message='Tap Sign in to resume OneDrive delivery. Your receipts are still saved on this device.';}throw e;}
   }
   async request(path,options={}){
     if(!path.startsWith('/'))throw new Error('Invalid OneDrive path');
@@ -33,7 +35,12 @@ export class OneDrive {
     const token=await this.token();
     const r=await timedFetch(BASE+path,{...options,headers:{...options.headers,Authorization:`Bearer ${token}`}});
     if(r.status===429)this.retryAfter=Date.now()+Math.max(30,Number(r.headers.get('Retry-After'))||60)*1000;
-    if(!r.ok){const e=new Error(r.status===401?'Sign in again to resume delivery.':'OneDrive is unavailable. Your receipts are saved here.');e.status=r.status;e.authRequired=r.status===401;throw e;}
+    if(!r.ok){
+      let code='';try{const body=await r.json();code=String(body.error?.code||'').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60);}catch{}
+      const descriptions={401:'Sign in again to resume delivery.',403:'OneDrive denied access to the receipt folder.',404:'The selected OneDrive folder could not be found.',413:'OneDrive rejected the upload size.',429:'OneDrive is temporarily limiting requests. Delivery will retry.',507:'OneDrive storage is full.'};
+      const e=new Error((descriptions[r.status]||'OneDrive could not complete delivery.')+` (OneDrive ${r.status}${code?' / '+code:''})`);
+      e.status=r.status;e.authRequired=r.status===401;e.deliveryError=true;throw e;
+    }
     return r.status===204?null:r.json();
   }
   item(target,path=''){

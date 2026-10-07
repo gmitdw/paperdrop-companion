@@ -17,7 +17,8 @@ test('capture survives reopen; failed upload retains blob; retry and catalog ack
 });
 test('catalog failure does not block capture delivery',async()=>{
  const store=fresh();await store.set('collection',target);await store.save(receipt());
- await deliver(store,{catalog:async()=>{throw new Error('missing');},upload:async()=>{}});
+ const result=await deliver(store,{catalog:async()=>{throw new Error('missing');},upload:async()=>{}});
+ assert.equal(result.catalogUnavailable,true);
  assert.equal((await store.list())[0].state,'submitted');
 });
 test('receipts cannot silently move between shared collections',async()=>{
@@ -48,6 +49,17 @@ test('cropped receipt keeps the original locally and uploads only the crop',asyn
  assert.equal(await row.originalBlob.text(),'original photo bytes');
  let sent;await deliver(reopened,{catalog:async()=>({version:1,documents:[]}),upload:async(t,n,blob)=>{sent=await blob.text();}});
  assert.equal(sent,'cropped photo bytes');assert.equal(await (await reopened.list())[0].originalBlob.text(),'original photo bytes');
+});
+
+test('expired sign-in preserves all three receipt sections until reconnected',async()=>{
+ const store=fresh();await store.set('collection',target);
+ await store.save(receipt(),target,[new Blob(['section 1']),new Blob(['section 2']),new Blob(['section 3'])]);
+ const transport={catalog:async()=>{const e=new Error('sign in');e.authRequired=true;throw e;},upload:async()=>assert.fail('must not upload without authentication')};
+ await assert.rejects(deliver(store,transport));
+ const reopened=new Store(store.name),saved=(await reopened.list())[0];
+ assert.equal(saved.state,'saved');assert.equal(saved.originalBlob.length,3);assert.ok(saved.blob.size);
+ transport.catalog=async()=>({version:1,documents:[]});transport.upload=async()=>{};
+ await deliver(reopened,transport);assert.equal((await reopened.list())[0].state,'submitted');
 });
 
 test('unfinished sections survive reopening; completing a receipt atomically removes its draft',async()=>{

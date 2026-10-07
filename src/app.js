@@ -4,10 +4,10 @@ import {cropReceipt} from './receipt-crop.js';
 import {Store,deliver} from './storage.js';
 import {OneDrive} from './graph.js';
 const $=id=>document.getElementById(id), store=new Store();
-let drive,filter='all',busy=false,folderStack=[],reviewRow;
+let drive,filter='all',busy=false,folderStack=[],reviewRow,signInNeeded=false;
 const say=text=>{$('status').textContent=text;};
 const showItems=installItemReview({store,sync,say,openDocument});
-const labels={saved:'Saved here',submitted:'Waiting for Surface',review:'Review',filed:'Filed'};
+const labels={saved:'Not uploaded',submitted:'Waiting for Surface',review:'Review',filed:'Filed'};
 
 async function render(){
   $('resume-receipt').hidden=!(await store.get('receipt-draft'));
@@ -132,14 +132,15 @@ async function sync(){
     const result=navigator.locks?await navigator.locks.request('paperdrop-delivery',{ifAvailable:true},lock=>lock?run():null):await run();
     if(!result)return;
     const waiting=(await store.list()).filter(r=>r.state==='saved').length;
-    say(result.waiting?'Ready to save receipts. Connect OneDrive once to enable delivery.':waiting?'Receipts are saved here. Delivery will resume automatically.':'Your receipts are safely saved. The Surface processes new arrivals when it is available.');
+    signInNeeded=false;$('connect').textContent='Connect';
+    say(result.waiting?'Saved on this device only. Tap Connect to enable OneDrive delivery.':waiting?'Receipts are saved on this device only and have not uploaded. Keep PaperDrop open to retry delivery.':result.catalogUnavailable?'The shared collection could not be refreshed. Uploaded receipts are in OneDrive; this list may be out of date.':'OneDrive delivery is up to date. The Surface processes uploaded receipts when it is available.');
     const actions=await store.actions();
     const attention=actions.find(a=>a.state==='attention');
     if(attention)say(attention.message);
     else if(actions.some(a=>['saved','submitted'].includes(a.state)))say('Your review changes are saved and waiting for the Surface.');
     await render();
-  }catch(e){say(e.authRequired?e.message:'Your receipts are saved here. OneDrive delivery will retry automatically.');}
-  finally{busy=false;}
+  }catch(e){signInNeeded=!!e.authRequired;if(signInNeeded)$('connect').textContent='Sign in';say(e.authRequired?'Tap Sign in to resume OneDrive delivery. Receipts marked Not uploaded are saved only on this device.':(e.deliveryError?e.message:'OneDrive delivery did not finish.')+' Receipts marked Not uploaded are saved only on this device.');}
+  finally{busy=false;await render();}
 }
 
 async function showFolders(){
@@ -153,6 +154,7 @@ async function showFolders(){
 }
 $('connect').onclick=async()=>{
   try{
+    if(signInNeeded){await drive.signIn();return;}
     await drive.token();
     if(await store.get('collection')){say('OneDrive is connected to your shared collection.');await sync();return;}
     folderStack=[];$('folder-dialog').showModal();await showFolders();

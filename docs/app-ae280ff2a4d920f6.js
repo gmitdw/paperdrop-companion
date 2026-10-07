@@ -15941,10 +15941,6 @@ async function timedFetch(url, options = {}) {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 45e3);
   try {
     return await fetch(url, { ...options, signal: controller.signal });
-  } catch (error) {
-    const e = new Error(error.name === "AbortError" ? "OneDrive delivery timed out after 45 seconds. Keep PaperDrop open and tap Refresh to retry." : "Cannot reach OneDrive. Check the internet connection and tap Refresh.");
-    e.deliveryError = true;
-    throw e;
   } finally {
     clearTimeout(timeout);
   }
@@ -15995,17 +15991,9 @@ var OneDrive = class {
     const r = await timedFetch(BASE + path, { ...options, headers: { ...options.headers, Authorization: `Bearer ${token}` } });
     if (r.status === 429) this.retryAfter = Date.now() + Math.max(30, Number(r.headers.get("Retry-After")) || 60) * 1e3;
     if (!r.ok) {
-      let code = "";
-      try {
-        const body = await r.json();
-        code = String(body.error?.code || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 60);
-      } catch {
-      }
-      const descriptions = { 401: "Sign in again to resume delivery.", 403: "OneDrive denied access to the receipt folder.", 404: "The selected OneDrive folder could not be found.", 413: "OneDrive rejected the upload size.", 429: "OneDrive is temporarily limiting requests. Delivery will retry.", 507: "OneDrive storage is full." };
-      const e = new Error((descriptions[r.status] || "OneDrive could not complete delivery.") + ` (OneDrive ${r.status}${code ? " / " + code : ""})`);
+      const e = new Error(r.status === 401 ? "Sign in again to resume delivery." : "OneDrive is unavailable. Your receipts are saved here.");
       e.status = r.status;
       e.authRequired = r.status === 401;
-      e.deliveryError = true;
       throw e;
     }
     return r.status === 204 ? null : r.json();
@@ -16322,7 +16310,7 @@ async function sync() {
   } catch (e) {
     signInNeeded = !!e.authRequired;
     if (signInNeeded) $3("connect").textContent = "Sign in";
-    say(e.authRequired ? "Tap Sign in to resume OneDrive delivery. Receipts marked Not uploaded are saved only on this device." : (e.deliveryError ? e.message : "OneDrive delivery did not finish.") + " Receipts marked Not uploaded are saved only on this device.");
+    say(e.authRequired ? "Tap Sign in to resume OneDrive delivery. Receipts marked Not uploaded are saved only on this device." : "OneDrive delivery did not finish. Receipts marked Not uploaded are saved only on this device. Keep PaperDrop open; delivery will retry.");
   } finally {
     busy = false;
     await render();
