@@ -2,6 +2,11 @@ import {PublicClientApplication,InteractionRequiredAuthError} from '@azure/msal-
 const BASE='https://graph.microsoft.com/v1.0';
 // Shared collections require the delegated scope covering files shared with the user.
 const scopes=['Files.ReadWrite.All'];
+async function authDeadline(promise){
+  let timer;
+  try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>{const e=new Error('Microsoft sign-in did not respond. Tap Sign in to OneDrive to reconnect.');e.authRequired=true;reject(e);},20000);})]);}
+  finally{clearTimeout(timer);}
+}
 async function timedFetch(url,options={}){
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),45000);
   try{return await fetch(url,{...options,signal:controller.signal});}
@@ -15,8 +20,8 @@ export class OneDrive {
     this.auth=new PublicClientApplication({auth:{clientId:this.config.clientId,
       authority:'https://login.microsoftonline.com/common',redirectUri:new URL('./',location.href).href},
       cache:{cacheLocation:'localStorage'}});
-    await this.auth.initialize();
-    const result=await this.auth.handleRedirectPromise();
+    await authDeadline(this.auth.initialize());
+    const result=await authDeadline(this.auth.handleRedirectPromise());
     if(result?.account)this.auth.setActiveAccount(result.account);
     else if(!this.auth.getActiveAccount())this.auth.setActiveAccount(this.auth.getAllAccounts()[0]||null);
   }
@@ -26,7 +31,7 @@ export class OneDrive {
   }
   async token(){
     if(!this.auth?.getActiveAccount()){const e=new Error('Connect OneDrive to deliver your saved receipts.');e.authRequired=true;throw e;}
-    try{return (await this.auth.acquireTokenSilent({scopes,account:this.auth.getActiveAccount()})).accessToken;}
+    try{return (await authDeadline(this.auth.acquireTokenSilent({scopes,account:this.auth.getActiveAccount()}))).accessToken;}
     catch(e){if(e instanceof InteractionRequiredAuthError || ['monitor_window_timeout','iframe_closed_prematurely','silent_sso_error','no_tokens_found','refresh_token_expired'].includes(e.errorCode)){e.authRequired=true;e.message='Tap Sign in to resume OneDrive delivery. Your receipts are still saved on this device.';}throw e;}
   }
   async request(path,options={}){
