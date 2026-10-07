@@ -144,7 +144,8 @@ async function sync(){
       if(!drive.config.clientId){showConnection('error','OneDrive setup is not finished. Receipts stay on this device.');return;}
       if(!navigator.onLine){showConnection('offline');return;}
       if(!drive.auth?.getActiveAccount()){signInNeeded=true;showConnection(await store.get('collection')?'signin':'setup');return;}
-    const run=()=>deliver(store,drive);
+      drive.onProgress=text=>{showConnection('uploading',text);say(text);};
+      const run=()=>deliver(store,drive);
     const result=navigator.locks?await navigator.locks.request('paperdrop-delivery',{ifAvailable:true},lock=>lock?run():null):await run();
     if(!result)return;
     const waiting=(await store.list()).filter(r=>r.state==='saved').length;

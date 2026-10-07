@@ -7,10 +7,10 @@ async function authDeadline(promise){
   try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>{const e=new Error('Microsoft sign-in did not respond. Tap Sign in to OneDrive to reconnect.');e.authRequired=true;reject(e);},20000);})]);}
   finally{clearTimeout(timer);}
 }
-async function timedFetch(url,options={}){
-  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),45000);
+async function timedFetch(url,options={},seconds=45){
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),seconds*1000);
   try{return await fetch(url,{...options,signal:controller.signal});}
-  catch(error){const e=new Error(error.name==='AbortError'?'OneDrive delivery timed out after 45 seconds. Keep PaperDrop open and tap Refresh to retry.':'Cannot reach OneDrive. Check the internet connection and tap Refresh.');e.deliveryError=true;throw e;}
+  catch(error){const e=new Error(error.name==='AbortError'?`OneDrive did not respond within ${seconds} seconds. Keep PaperDrop open to retry.`:'Cannot reach OneDrive. Check the internet connection and tap Refresh.');e.deliveryError=true;throw e;}
   finally{clearTimeout(timeout);}
 }
 export class OneDrive {
@@ -75,13 +75,66 @@ export class OneDrive {
     const r=await timedFetch(url,{credentials:'omit'});if(!r.ok)throw new Error('Download unavailable');return r;
   }
   async catalog(target){return (await this.download(target,'PaperDrop Catalog/catalog.json')).json();}
-  async upload(target,name,blob){
-    return this.uploadInto(target,'PaperDrop Inbox',name,blob);
+  async upload(target,name,blob,resume={}){
+    const path=this.item(target,'PaperDrop Inbox/'+name);
+    const progress=(text)=>this.onProgress?.(text);
+    const save=async(session)=>{resume.session=session;await resume.saveSession?.(session);};
+    const sessionRequest=async(url,options={})=>{
+      if(new URL(url).protocol!=='https:')throw new Error('Invalid upload session');
+      // The upload URL is pre-authorized. Never send the Graph bearer token here.
+      const response=await timedFetch(url,{...options,credentials:'omit'},90);
+      if(!response.ok){const e=new Error(`OneDrive could not transfer this receipt (upload ${response.status}). Your saved copy is unchanged.`);e.status=response.status;e.deliveryError=true;throw e;}
+      return {status:response.status,data:await response.json()};
+    };
+    let session=resume.session,offset=0;
+    try{
+      if(session?.uploadUrl){
+        progress('Resuming receipt upload…');
+        try{
+          const result=await sessionRequest(session.uploadUrl);
+          offset=Number(result.data.nextExpectedRanges?.[0]?.split('-')[0]);
+          if(!Number.isInteger(offset)||offset<0||offset>=blob.size)throw new Error('Invalid upload progress');
+        }catch(e){
+          if(e.status!==404&&e.status!==410)throw e;
+          // Final response may have been lost after OneDrive committed the file.
+          let item;try{item=await this.request(path);}catch(check){if(check.status!==404)throw check;}
+          if(item?.size===blob.size){await save(null);return;}
+          session=null;await save(null);
+        }
+      }
+      if(!session){
+        progress('Preparing receipt upload…');
+        await this.ensureFolder(target,'PaperDrop Inbox');
+        session=await this.request(path+':/createUploadSession',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:{'@microsoft.graph.conflictBehavior':'replace',name}})});
+        if(!session?.uploadUrl)throw new Error('OneDrive did not create an upload session');
+        await save({uploadUrl:session.uploadUrl,expirationDateTime:session.expirationDateTime});
+      }
+      const chunk=327680;
+      while(offset<blob.size){
+        progress(`Uploading receipt — ${Math.floor(offset/blob.size*100)}%. Keep PaperDrop open.`);
+        const end=Math.min(offset+chunk,blob.size);
+        const result=await sessionRequest(session.uploadUrl,{method:'PUT',headers:{'Content-Type':'application/octet-stream','Content-Range':`bytes ${offset}-${end-1}/${blob.size}`},body:blob.slice(offset,end)});
+        if(result.status===200||result.status===201){
+          if(end!==blob.size||result.data.size!==blob.size)throw new Error('OneDrive upload confirmation did not match the receipt');
+          await save(null);progress('Receipt uploaded. Waiting for Surface processing.');return;
+        }
+        const next=Number(result.data.nextExpectedRanges?.[0]?.split('-')[0]);
+        if(result.status!==202||next!==end||next>=blob.size)throw new Error('OneDrive returned unexpected upload progress');
+        offset=next;
+      }
+      throw new Error('OneDrive did not confirm the completed receipt');
+    }catch(error){
+      if(error.deliveryError)error.message='Receipt upload: '+error.message;
+      throw error;
+    }
   }
-  async uploadInto(target,folder,name,blob){
+  async ensureFolder(target,folder){
     try {await this.request(this.item(target,folder));}
     catch(e){if(e.status!==404)throw e;await this.request(this.item(target)+'/children',{
       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:folder,folder:{},'@microsoft.graph.conflictBehavior':'fail'})});}
+  }
+  async uploadInto(target,folder,name,blob){
+    await this.ensureFolder(target,folder);
     await this.request(this.item(target,folder+'/'+name)+':/content',{
       method:'PUT',headers:{'Content-Type':blob.type||'application/octet-stream'},body:blob});
   }

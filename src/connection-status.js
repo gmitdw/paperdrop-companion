@@ -1,6 +1,7 @@
 export function connectionStatus(state){
   const states={
     checking:{title:'Checking OneDrive…',text:'Receipts are saved on this device until upload is confirmed.',action:null},
+    uploading:{title:'Uploading receipt to OneDrive',text:'Keep PaperDrop open. Your saved receipt stays on this device until delivery is confirmed.',action:null},
     setup:{title:'Connect OneDrive to send receipts',text:'Complete this setup once. Until then, receipts stay only on this device.',action:'Connect OneDrive'},
     signin:{title:'Sign in required — uploads have stopped',text:'Microsoft needs you to sign in again. Your receipt folder is remembered. Saved receipts will upload after you sign in.',action:'Sign in to OneDrive'},
     folder:{title:'Choose your receipt folder',text:'Choose your shared RECEIPTS folder once to finish setup. Receipts have not uploaded yet.',action:'Choose receipt folder'},
