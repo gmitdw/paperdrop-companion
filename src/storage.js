@@ -80,7 +80,7 @@ export async function deliver(store,transport) {
     if(row.state!=='saved') continue;
     // Persist destination before uploading, so a later connection change cannot reroute a retry.
     row.collection=target; await store.put(row);
-    await transport.upload(target,`Receipt-${row.id}.${row.ext}`,row.blob,{session:row.uploadSession,saveSession:async(session)=>{row.uploadSession=session;await store.put(row);}});
+    await transport.upload(target,`Receipt-${row.id}.${row.ext}`,row.blob,{digest:row.digest,session:row.uploadSession,saveSession:async(session)=>{row.uploadSession=session;await store.put(row);}});
     row.state='submitted'; await store.put(row);
   }
   const actions=await store.actions();

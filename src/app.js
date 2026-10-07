@@ -157,7 +157,7 @@ async function sync(){
     if(attention)say(attention.message);
     else if(actions.some(a=>['saved','submitted'].includes(a.state)))say('Your review changes are saved and waiting for the Surface.');
     await render();
-  }catch(e){signInNeeded=!!e.authRequired;showConnection(signInNeeded?'signin':'error',!signInNeeded&&e.deliveryError?e.message+' Receipts marked Not uploaded remain on this device.':'');say(e.authRequired?'Sign in is required to resume uploads.':'Delivery has not completed. See the OneDrive notice above.');}
+  }catch(e){signInNeeded=!!e.authRequired;showConnection(signInNeeded?'signin':'error',!signInNeeded&&(e.deliveryError||e.receiptReadError)?e.message+' Receipts marked Not uploaded remain on this device.':'');say(e.authRequired?'Sign in is required to resume uploads.':'Delivery has not completed. See the OneDrive notice above.');}
   finally{busy=false;await render();}
 }
 

@@ -24,7 +24,8 @@ test('receipt uploads resume acknowledged chunks after interruption and app reop
   assert.equal(options.credentials,'omit');assert.equal(options.headers?.Authorization,undefined);
   if(!options.method)return new Response(JSON.stringify({nextExpectedRanges:[offset+'-']}));
   if(fail&&offset===327680){fail=false;throw new TypeError('connection interrupted');}
-  ranges.push(options.headers['Content-Range']);offset+=options.body.size;
+  assert.ok(options.body instanceof ArrayBuffer);
+  ranges.push(options.headers['Content-Range']);offset+=options.body.byteLength;
   return new Response(JSON.stringify(offset===blob.size?{size:blob.size}:{nextExpectedRanges:[offset+'-']}),{status:offset===blob.size?201:202});
  };
  const resume=()=>({session:saved,saveSession:async(s)=>{saved=s;}});
@@ -60,4 +61,34 @@ test('OneDrive rejection preserves a safe diagnostic code and does not expose se
   globalThis.fetch=async()=>{throw new TypeError('fetch failed');};
   await assert.rejects(drive.request('/test'),e=>e.deliveryError && e.message.includes('Cannot reach OneDrive'));
  }finally{globalThis.fetch=original;}
+});
+
+test('unreadable or changed receipt bytes are distinguished from OneDrive failures before any request',async()=>{
+ const drive=new OneDrive({});drive.request=async()=>assert.fail('must verify local bytes before contacting OneDrive');
+ await assert.rejects(drive.upload({drive:'d',id:'i'},'Receipt.pdf',{size:7,arrayBuffer:async()=>{throw new Error('NotReadableError');}}),e=>e.receiptReadError&&!e.deliveryError);
+ await assert.rejects(drive.upload({drive:'d',id:'i'},'Receipt.pdf',new Blob(['changed']),{digest:'bad'}),e=>e.receiptReadError&&e.message.includes('verification'));
+});
+
+test('real HTTP receiver obtains exact bytes from all chunks without Blob request bodies',async()=>{
+ const {createServer}=await import('node:http');
+ const received=[];let size=0;
+ const payload=Uint8Array.from({length:800123},(_,i)=>i%251),blob=new Blob([payload]);
+ const server=createServer(async(req,res)=>{
+   const parts=[];for await(const part of req)parts.push(part);
+   const body=Buffer.concat(parts);received.push(body);size+=body.length;
+   assert.equal(Number(req.headers['content-length']),body.length);
+   res.writeHead(size===blob.size?201:202,{'Content-Type':'application/json'});
+   res.end(JSON.stringify(size===blob.size?{size}:{nextExpectedRanges:[size+'-']}));
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const original=globalThis.fetch,drive=new OneDrive({});
+ drive.request=async path=>path.endsWith('createUploadSession')?{uploadUrl:'https://upload.example/test'}:{};
+ globalThis.fetch=(url,options)=>{
+   assert.ok(options.body instanceof ArrayBuffer,'do not hand a stored Blob to the network process');
+   return original(`http://127.0.0.1:${server.address().port}/test`,options);
+ };
+ try{
+   await drive.upload({drive:'d',id:'i'},'Receipt.pdf',blob);
+   assert.equal(received.length,3);assert.deepEqual(Buffer.concat(received),Buffer.from(payload));
+ }finally{globalThis.fetch=original;await new Promise(resolve=>server.close(resolve));}
 });

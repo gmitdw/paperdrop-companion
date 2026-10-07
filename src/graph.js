@@ -88,6 +88,26 @@ export class OneDrive {
     };
     let session=resume.session,offset=0;
     try{
+      // Read in the page process before asking the network process to upload.
+      // Safari can report the right size for an IndexedDB-backed File while
+      // sending an empty body. ArrayBuffer bodies do not use that file handle.
+      progress('Checking saved receipt…');
+      let readTimer;
+      let content;
+      try{
+        content=await Promise.race([blob.arrayBuffer(),new Promise((_,reject)=>{
+          readTimer=setTimeout(()=>reject(new Error('Reading the saved receipt timed out.')),20000);
+        })]);
+        if(content.byteLength!==blob.size||!content.byteLength)throw new Error('Saved receipt size does not match its contents.');
+        if(resume.digest){
+          const hash=await crypto.subtle.digest('SHA-256',content);
+          const digest=Array.from(new Uint8Array(hash),n=>n.toString(16).padStart(2,'0')).join('');
+          if(digest!==resume.digest)throw new Error('Saved receipt contents did not pass verification.');
+        }
+      }catch(error){
+        const e=new Error('PaperDrop could not read the saved receipt on this device. Your saved copy and original photos have been kept. '+error.message);
+        e.receiptReadError=true;throw e;
+      }finally{clearTimeout(readTimer);}
       if(session?.uploadUrl){
         progress('Resuming receipt upload…');
         try{
@@ -113,7 +133,7 @@ export class OneDrive {
       while(offset<blob.size){
         progress(`Uploading receipt — ${Math.floor(offset/blob.size*100)}%. Keep PaperDrop open.`);
         const end=Math.min(offset+chunk,blob.size);
-        const result=await sessionRequest(session.uploadUrl,{method:'PUT',headers:{'Content-Type':'application/octet-stream','Content-Range':`bytes ${offset}-${end-1}/${blob.size}`},body:blob.slice(offset,end)});
+        const result=await sessionRequest(session.uploadUrl,{method:'PUT',headers:{'Content-Type':'application/octet-stream','Content-Range':`bytes ${offset}-${end-1}/${blob.size}`},body:content.slice(offset,end)});
         if(result.status===200||result.status===201){
           if(end!==blob.size||result.data.size!==blob.size)throw new Error('OneDrive upload confirmation did not match the receipt');
           await save(null);progress('Receipt uploaded. Waiting for Surface processing.');return;
