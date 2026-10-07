@@ -191,11 +191,14 @@ document.querySelectorAll('[data-filter]').forEach(button=>button.onclick=()=>{
 });
 window.addEventListener('online',sync);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')sync();});
 async function start(){
+  // Updates must not wait for Microsoft authentication or OneDrive delivery.
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(reg=>reg.update()).catch(()=>{});
+  }
   try{
     await render();
     const config=await fetch('./config.json').then(r=>r.json());drive=new OneDrive(config);await drive.init();
     $('setup-note').textContent=!config.clientId?'Installation in progress: the Microsoft account connection still needs to be registered. Capture works locally; OneDrive delivery is not enabled yet.':'Microsoft permission covers files you can access in OneDrive, including shared files. PaperDrop uses the collection folder you select.';
-    if('serviceWorker' in navigator)await navigator.serviceWorker.register('./sw.js');
     await sync();setInterval(sync,30000);
     }catch(e){signInNeeded=!!e.authRequired;showConnection(signInNeeded?'signin':'error',signInNeeded?'Microsoft did not complete sign-in. Your receipt folder and saved receipts are still here. Tap Sign in to OneDrive.':'PaperDrop could not finish connecting. Your saved receipts have not been removed.');say('PaperDrop could not finish opening. Your saved receipts have not been removed. '+e.message);}
 }
