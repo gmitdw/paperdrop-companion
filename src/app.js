@@ -3,9 +3,24 @@ import {newestReceiptFirst} from './document-order.js';
 import {cropReceipt} from './receipt-crop.js';
 import {Store,deliver} from './storage.js';
 import {OneDrive} from './graph.js';
+import {connectionStatus} from './connection-status.js';
 const $=id=>document.getElementById(id), store=new Store();
 let drive,filter='all',busy=false,folderStack=[],reviewRow,signInNeeded=false;
 const say=text=>{$('status').textContent=text;};
+let connectionState='checking';
+const connectionPanel=document.createElement('section');connectionPanel.id='connection-status';connectionPanel.setAttribute('aria-label','OneDrive delivery');
+const connectionTitle=document.createElement('strong'),connectionText=document.createElement('p'),connectionAction=document.createElement('button');
+connectionTitle.setAttribute('role','status');connectionPanel.append(connectionTitle,connectionText,connectionAction);
+document.querySelector('header').after(connectionPanel);
+function showConnection(state,detail=''){
+  connectionState=state;const info=connectionStatus(state);
+  connectionPanel.dataset.state=state;connectionTitle.textContent=info.title;connectionText.textContent=detail||info.text;
+  connectionAction.textContent=info.action||'';connectionAction.hidden=!info.action;
+  $('connect').textContent=state==='signin'?'Sign in to OneDrive':state==='setup'?'Connect OneDrive':state==='folder'?'Choose receipt folder':'Check connection';
+  $('connect').disabled=state==='checking';
+}
+connectionAction.onclick=()=>['signin','setup','folder'].includes(connectionState)?$('connect').click():sync();
+showConnection('checking');
 const showItems=installItemReview({store,sync,say,openDocument});
 const labels={saved:'Not uploaded',submitted:'Waiting for Surface',review:'Review',filed:'Filed'};
 
@@ -126,20 +141,22 @@ async function capture(event){
 async function sync(){
   if(busy||!drive)return;busy=true;
   try{
-    if(!drive.config.clientId){say('Setup in progress. Receipts can be saved here; OneDrive delivery is not connected yet.');return;}
-    if(!navigator.onLine){say('Saved on this device. Reopen PaperDrop when you’re online to send waiting receipts.');return;}
+      if(!drive.config.clientId){showConnection('error','OneDrive setup is not finished. Receipts stay on this device.');return;}
+      if(!navigator.onLine){showConnection('offline');return;}
+      if(!drive.auth?.getActiveAccount()){signInNeeded=true;showConnection(await store.get('collection')?'signin':'setup');return;}
     const run=()=>deliver(store,drive);
     const result=navigator.locks?await navigator.locks.request('paperdrop-delivery',{ifAvailable:true},lock=>lock?run():null):await run();
     if(!result)return;
     const waiting=(await store.list()).filter(r=>r.state==='saved').length;
-    signInNeeded=false;$('connect').textContent='Connect';
+      signInNeeded=false;
+      showConnection(result.waiting?'folder':waiting?'pending':result.catalogUnavailable?'stale':'connected');
     say(result.waiting?'Saved on this device only. Tap Connect to enable OneDrive delivery.':waiting?'Receipts are saved on this device only and have not uploaded. Keep PaperDrop open to retry delivery.':result.catalogUnavailable?'The shared collection could not be refreshed. Uploaded receipts are in OneDrive; this list may be out of date.':'OneDrive delivery is up to date. The Surface processes uploaded receipts when it is available.');
     const actions=await store.actions();
     const attention=actions.find(a=>a.state==='attention');
     if(attention)say(attention.message);
     else if(actions.some(a=>['saved','submitted'].includes(a.state)))say('Your review changes are saved and waiting for the Surface.');
     await render();
-  }catch(e){signInNeeded=!!e.authRequired;if(signInNeeded)$('connect').textContent='Sign in';say(e.authRequired?'Tap Sign in to resume OneDrive delivery. Receipts marked Not uploaded are saved only on this device.':(e.deliveryError?e.message:'OneDrive delivery did not finish.')+' Receipts marked Not uploaded are saved only on this device.');}
+  }catch(e){signInNeeded=!!e.authRequired;showConnection(signInNeeded?'signin':'error',!signInNeeded&&e.deliveryError?e.message+' Receipts marked Not uploaded remain on this device.':'');say(e.authRequired?'Sign in is required to resume uploads.':'Delivery has not completed. See the OneDrive notice above.');}
   finally{busy=false;await render();}
 }
 
@@ -154,11 +171,12 @@ async function showFolders(){
 }
 $('connect').onclick=async()=>{
   try{
-    if(signInNeeded){await drive.signIn();return;}
+      if(!drive){showConnection('error','PaperDrop is still opening. Close and reopen it if this persists.');return;}
+      if(signInNeeded){await drive.signIn();return;}
     await drive.token();
     if(await store.get('collection')){say('OneDrive is connected to your shared collection.');await sync();return;}
     folderStack=[];$('folder-dialog').showModal();await showFolders();
-  }catch(e){if(e.authRequired)await drive.signIn().catch(e=>say(e.message));else say(e.message);}
+    }catch(e){if(e.authRequired){signInNeeded=true;showConnection('signin');await drive.signIn().catch(e=>say(e.message));}else {showConnection('error',e.deliveryError?e.message:'The OneDrive connection could not be completed. Your saved receipts remain on this device.');say(e.message);}}
 };
 $('folder-back').onclick=async()=>{folderStack.pop();await showFolders().catch(e=>say(e.message));};
 $('folder-cancel').onclick=()=>$('folder-dialog').close();
@@ -179,6 +197,6 @@ async function start(){
     $('setup-note').textContent=!config.clientId?'Installation in progress: the Microsoft account connection still needs to be registered. Capture works locally; OneDrive delivery is not enabled yet.':'Microsoft permission covers files you can access in OneDrive, including shared files. PaperDrop uses the collection folder you select.';
     if('serviceWorker' in navigator)await navigator.serviceWorker.register('./sw.js');
     await sync();setInterval(sync,30000);
-  }catch(e){say('PaperDrop could not finish opening. Your saved receipts have not been removed. '+e.message);}
+    }catch(e){showConnection('error','PaperDrop could not finish connecting. Your saved receipts have not been removed.');say('PaperDrop could not finish opening. Your saved receipts have not been removed. '+e.message);}
 }
 start();
