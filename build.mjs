@@ -1,7 +1,8 @@
 import {build} from 'esbuild';
-import {readFile,writeFile} from 'node:fs/promises';
+import {readFile,writeFile,copyFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 await build({entryPoints:['src/app.js'],bundle:true,format:'esm',target:'safari16',outfile:'dist/app.js'});
+await copyFile('node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs','dist/pdf-worker-6.4.299.mjs');
 const hash=createHash('sha256');
 for(const file of ['app.js','style.css','index.html','config.json','manifest.webmanifest'])hash.update(await readFile('dist/'+file));
 const version=hash.digest('hex').slice(0,16);
