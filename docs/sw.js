@@ -1,5 +1,5 @@
-const CACHE='paperdrop-shell-df800ac28fe84bac';
-const SHELL=['./','./index.html','./style-df800ac28fe84bac.css','./app-df800ac28fe84bac.js','./config.json','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
+const CACHE='paperdrop-shell-def84d44ef9ec32e';
+const SHELL=['./','./index.html','./style-def84d44ef9ec32e.css','./app-def84d44ef9ec32e.js','./config.json','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL.map(path=>new Request(new URL(path,self.registration.scope),{cache:'reload'})))).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('paperdrop-shell-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{

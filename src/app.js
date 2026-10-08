@@ -1,6 +1,7 @@
 import {installItemReview} from './receipt-items.js';
 import {newestReceiptFirst} from './document-order.js';
 import {cropReceipt} from './receipt-crop.js';
+import {captureReceiptCamera} from './receipt-camera.js';
 import {Store,deliver} from './storage.js';
 import {OneDrive} from './graph.js';
 import {connectionStatus} from './connection-status.js';
@@ -200,6 +201,12 @@ $('folder-use').onclick=async()=>{
   await store.set('collection',target);$('folder-dialog').close();say('Collection connected.');await sync();
 };
 $('resume-receipt').onclick=async()=>{try{await cropReceipt(null,store);await render();await sync();}catch(e){say(e.message);await render();}};
+$('take-photo').onclick=async()=>{
+  try{const target=await store.get('collection');const mode=await captureReceiptCamera(store,target);
+    if(mode==='save'||mode==='review')await cropReceipt(null,store,target,{autoSave:mode==='save'});
+    await render();await sync();
+  }catch(e){say('Your saved sections are kept. '+e.message);await render();}
+};
 $('camera').onchange=capture;$('files').onchange=capture;$('refresh').onclick=sync;$('search').oninput=()=>render();
 document.querySelectorAll('[data-filter]').forEach(button=>button.onclick=()=>{
   filter=button.dataset.filter;document.querySelectorAll('[data-filter]').forEach(b=>b.classList.toggle('selected',b===button));render();

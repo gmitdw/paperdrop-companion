@@ -1,4 +1,5 @@
 import {receiptPdf} from './receipt-pdf.js';
+import {stitchReceipt} from './receipt-stitch.js';
 import {detectReceipt,fullQuad,validQuad,projection} from './receipt-geometry.js';
 const $=id=>document.getElementById(id);
 const pause=()=>new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
@@ -34,10 +35,10 @@ export function straighten(source,q){
   }
   ctx.putImageData(out,0,0);return result;
 }
-export async function cropReceipt(file,store,collection){
+export async function cropReceipt(file,store,collection,{autoSave=false}={}){
   const dialog=$('crop-dialog'),screen=$('crop-canvas'),ctx=screen.getContext('2d'),frame=$('crop-frame');
   const handles=[...dialog.querySelectorAll('.crop-handle')];
-  let draft=await store.get('receipt-draft'),source,preview,corners=fullQuad(),editing=false,rotation=0,working=true,finish,index=0,editStart;
+  let draft=await store.get('receipt-draft'),source,preview,corners=fullQuad(),editing=false,rotation=0,working=true,finish,index=0,editStart,retakeIndex=null;
   if(file&&draft)throw new Error('Resume your unfinished receipt before starting another.');
   if(file){draft={collection,sections:[{original:file}],index:0};await store.set('receipt-draft',draft);draft=await store.get('receipt-draft');}
   if(!draft)return null;
@@ -89,7 +90,7 @@ export async function cropReceipt(file,store,collection){
       const s=draft.sections[index];source=null;preview=null;source=await decode(s.original);rotation=s.rotation||0;
       if(s.corners)corners=s.corners;
       else{const scale=Math.min(1,440/Math.max(source.width,source.height)),small=canvas(Math.max(1,Math.round(source.width*scale)),Math.max(1,Math.round(source.height*scale)));small.getContext('2d').drawImage(source,0,0,small.width,small.height);await pause();corners=detectReceipt(small.getContext('2d').getImageData(0,0,small.width,small.height)).corners;}
-      await makePreview();
+      await makePreview();return true;
     }catch(e){working=false;controls();$('crop-save').disabled=true;$('crop-add').disabled=true;note('This photo could not be prepared. Close to keep the draft, or use â€¢â€¢â€¢ to discard it. '+e.message);}
   }
   function close(value){observer.disconnect();dialog.close();finish(value);}
@@ -121,11 +122,14 @@ export async function cropReceipt(file,store,collection){
     handle.onpointerup=handle.onpointercancel=handle.onlostpointercapture=()=>{pointer=null;};
     handle.onkeydown=e=>{const delta={ArrowLeft:[-.01,0],ArrowRight:[.01,0],ArrowUp:[0,-.01],ArrowDown:[0,.01]}[e.key];if(!delta||working)return;e.preventDefault();const next=corners.map(p=>({...p}));next[i]={x:Math.max(0,Math.min(1,next[i].x+delta[0])),y:Math.max(0,Math.min(1,next[i].y+delta[1]))};if(validQuad(next)){corners=next;draw();}};
   });
-  $('crop-add').onclick=()=>{if(working)return;if(draft.sections.length>=20){note('This receipt has 20 sections. Save it before starting another.');return;}hideTools();$('section-camera').click();};
+  $('crop-retake').onclick=()=>{if(working)return;hideTools();retakeIndex=index;$('section-camera').click();};
+  $('crop-add').onclick=()=>{if(working)return;if(draft.sections.length>=20){note('This receipt has 20 sections. Save it before starting another.');return;}hideTools();retakeIndex=null;$('section-camera').click();};
   $('section-camera').onchange=async e=>{
-    const next=e.target.files[0];e.target.value='';if(!next||working)return;
-    working=true;controls();draft.sections.push({original:next});index=draft.sections.length-1;
-    try{await persist();await load();}catch(error){draft.sections.pop();index=draft.sections.length-1;await load();note('The new section could not be saved. '+error.message);}
+    const next=e.target.files[0],replaceIndex=retakeIndex;e.target.value='';retakeIndex=null;if(!next||working)return;
+    working=true;controls();const previous=draft.sections.slice(),previousIndex=index;
+    if(replaceIndex!==null){draft.sections[replaceIndex]={original:next};index=replaceIndex;}
+    else{draft.sections.push({original:next});index=draft.sections.length-1;}
+    try{await persist();await load();}catch(error){draft.sections=previous;index=previousIndex;await load();note('The new section could not be saved. '+error.message);}
   };
   $('crop-previous').onclick=()=>{if(!working&&index>0){index--;load();}};
   $('crop-next').onclick=()=>{if(!working&&index<draft.sections.length-1){index++;load();}};
@@ -133,12 +137,17 @@ export async function cropReceipt(file,store,collection){
     if(working)return;working=true;controls();note('Saving your receiptâ€¦');
     try{
       if(draft.sections.some(s=>!s.blob))throw new Error('Check each section before saving.');
-      const result=await receiptPdf(draft.sections);
+      const result=draft.sections.length>1?await stitchReceipt(draft.sections,note,section=>{index=section;}):await receiptPdf(draft.sections);
+      if(!result){await load();note(`Check section ${index+1}. Use ••• to adjust its edges or retake it, then save again.`);return;}
       // Commit the receipt and remove its draft together; retries cannot create a duplicate.
       await store.save(result,draft.collection,draft.sections.map(s=>s.original),true);close(result);
     }catch(e){working=false;controls();note('Your sections are still saved here. '+e.message);}
   };
   hideTools();controls();dialog.showModal();$('crop-title').focus({preventScroll:true});
   const observer=new ResizeObserver(draw);observer.observe($('crop-stage'));
-  await load();const result=await done;screen.width=screen.height=1;if(source)source.width=source.height=1;preview=null;return result;
+  let ready=true;
+  for(let i=0;i<draft.sections.length;i++){if(!draft.sections[i].blob){index=i;if(!await load()){ready=false;break;}}}
+  if(ready)ready=await load();
+  if(autoSave&&ready)await $('crop-save').onclick();
+  const result=await done;screen.width=screen.height=1;if(source)source.width=source.height=1;preview=null;return result;
 }
